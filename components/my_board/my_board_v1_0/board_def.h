@@ -36,7 +36,7 @@
 #define BUTTON_SET_ID             BUTTON_LEFT_ID
 #define BUTTON_MODE_ID            BUTTON_RIGHT_ID
 #define BUTTON_PLAY_ID            BUTTON_CENTER_ID
-#define SDCARD_INTR_GPIO         -1
+#define SDCARD_INTR_GPIO          27
 
 #define SDCARD_OPEN_FILE_NUM_MAX  5
 
