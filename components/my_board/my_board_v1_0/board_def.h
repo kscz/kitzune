@@ -25,11 +25,17 @@
 #ifndef _AUDIO_BOARD_DEFINITION_H_
 #define _AUDIO_BOARD_DEFINITION_H_
 
-#define BUTTON_VOLUP_ID           34
-#define BUTTON_VOLDOWN_ID         36
-#define BUTTON_SET_ID             38
-#define BUTTON_MODE_ID            37
-#define BUTTON_PLAY_ID            39
+#define BUTTON_UP_ID           34
+#define BUTTON_DOWN_ID         36
+#define BUTTON_CENTER_ID       39
+#define BUTTON_LEFT_ID         38
+#define BUTTON_RIGHT_ID        37
+
+#define BUTTON_VOLUP_ID           BUTTON_UP_ID
+#define BUTTON_VOLDOWN_ID         BUTTON_DOWN_ID
+#define BUTTON_SET_ID             BUTTON_LEFT_ID
+#define BUTTON_MODE_ID            BUTTON_RIGHT_ID
+#define BUTTON_PLAY_ID            BUTTON_CENTER_ID
 #define SDCARD_INTR_GPIO         -1
 
 #define SDCARD_OPEN_FILE_NUM_MAX  5
@@ -66,31 +72,37 @@ extern audio_hal_func_t AUDIO_NEW_CODEC_DEFAULT_HANDLE;
 
 #define INPUT_KEY_NUM     5
 
+#define INPUT_KEY_USER_ID_UP     0x10
+#define INPUT_KEY_USER_ID_DOWN   0x11
+#define INPUT_KEY_USER_ID_LEFT   0x12
+#define INPUT_KEY_USER_ID_RIGHT  0x13
+#define INPUT_KEY_USER_ID_CENTER 0x14
+
 #define INPUT_KEY_DEFAULT_INFO() {                      \
     {                                                   \
         .type = PERIPH_ID_BUTTON,                       \
-        .user_id = INPUT_KEY_USER_ID_VOLUP,             \
-        .act_id = BUTTON_VOLUP_ID,                      \
+        .user_id = INPUT_KEY_USER_ID_UP,                \
+        .act_id = BUTTON_UP_ID,                         \
     },                                                  \
     {                                                   \
         .type = PERIPH_ID_BUTTON,                       \
-        .user_id = INPUT_KEY_USER_ID_VOLDOWN,           \
-        .act_id = BUTTON_VOLDOWN_ID,                    \
+        .user_id = INPUT_KEY_USER_ID_DOWN,              \
+        .act_id = BUTTON_DOWN_ID,                       \
     },                                                  \
     {                                                   \
         .type = PERIPH_ID_BUTTON,                       \
-        .user_id = INPUT_KEY_USER_ID_PLAY,              \
-        .act_id = BUTTON_PLAY_ID,                       \
+        .user_id = INPUT_KEY_USER_ID_CENTER,            \
+        .act_id = BUTTON_CENTER_ID,                     \
     },                                                  \
     {                                                   \
         .type = PERIPH_ID_BUTTON,                       \
-        .user_id = INPUT_KEY_USER_ID_SET,               \
-        .act_id = BUTTON_SET_ID,                        \
+        .user_id = INPUT_KEY_USER_ID_LEFT,              \
+        .act_id = BUTTON_LEFT_ID,                       \
     },                                                  \
     {                                                   \
         .type = PERIPH_ID_BUTTON,                       \
-        .user_id = INPUT_KEY_USER_ID_MODE,              \
-        .act_id = BUTTON_MODE_ID,                       \
+        .user_id = INPUT_KEY_USER_ID_RIGHT,             \
+        .act_id = BUTTON_RIGHT_ID,                      \
     },                                                  \
 }
 

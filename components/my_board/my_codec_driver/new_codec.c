@@ -34,6 +34,7 @@ static const char *TAG = "new_codec";
 
 static bool codec_init_flag = false;
 static i2c_bus_handle_t i2c_handle;
+static uint8_t s_volume = 25;
 
 audio_hal_func_t AUDIO_NEW_CODEC_DEFAULT_HANDLE = {
     .audio_codec_initialize = new_codec_init,
@@ -58,7 +59,7 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
         .mode = I2C_MODE_MASTER,
         .sda_pullup_en = 0,
         .scl_pullup_en = 0,
-        .master.clk_speed = 100000,
+        .master.clk_speed = 400000,
     };
     res = get_i2c_pins(I2C_NUM_0, &max_i2c_cfg);
     if (res != ESP_OK) {
@@ -67,6 +68,88 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     i2c_handle = i2c_bus_create(I2C_NUM_0, &max_i2c_cfg);
 
     uint8_t regbuf, txbuf[64];
+    ESP_LOGE(TAG, "Codec shutdown");
+    // Force the device into shutdown and disable the DACs
+    regbuf = 0x17;
+    txbuf[0] = 0;
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    // Calibrate ADC offset
+    regbuf = 0x14;
+    txbuf[0] = 0x0;
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    // Configure codec clock fixed at 12.288MHz MCLK, 48kHz LRCLK
+    ESP_LOGE(TAG, "Codec Clock initial cfg");
+    regbuf = 0x05;
+    txbuf[0] = (1 << 4);
+    txbuf[1] = 0x60; // PLL disabled, NI = 0x6000
+    txbuf[2] = 0x00;
+    txbuf[3] = 0x10; // Slave mode, I2S compatible signal
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 4);
+
+    // Diable JDETEN
+    ESP_LOGE(TAG, "Codec disable JDETEN, enable ADCs, calibration start");
+    regbuf = 0x16;
+    txbuf[0] = 2;
+    txbuf[1] = 0x80 | 0x3; // enable ADCs, !SHDN = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
+
+    // Calibrate ADC offset
+    ESP_LOGE(TAG, "Codec offset calibration");
+    regbuf = 0x14;
+    txbuf[0] = 0x3; // AUXEN = 1, AUXCAL = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    ESP_LOGE(TAG, "Codec offset calibration complete");
+    regbuf = 0x14;
+    txbuf[0] = 0x0; // AUXEN = 0, AUXCAL = 0
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    ESP_LOGE(TAG, "Codec gain calibration");
+    regbuf = 0x14;
+    txbuf[0] = 0x5; // AUXEN = 1, AUXGAIN = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // Set AUXCAP to freeze result...
+    regbuf = 0x14;
+    txbuf[0] = 0xD; // AUXEN = 1, AUXGAIN = 1, AUXCAP = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    regbuf = 0x2;
+    uint8_t gain_result[2] = {0, 0};
+    i2c_bus_read_bytes(i2c_handle, 0x30, &regbuf, 1, gain_result, 2);
+
+    // End calibration!
+    regbuf = 0x14;
+    txbuf[0] = 0x1; // AUXEN = 1, AUXCAL = 0, AUXGAIN = 0, AUXCAP = 0
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+    ESP_LOGE(TAG, "Codec gain calibration complete - 0x%" PRIx8 "%" PRIx8, gain_result[0], gain_result[1]);
+
+    // Get a baseline reading for AUX
+    ESP_LOGE(TAG, "Codec get base AUX reading");
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // Freeze base reading
+    regbuf = 0x14;
+    txbuf[0] = 0x9; // AUXEN = 1, AUXCAP = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    // Read AUX register
+    regbuf = 0x2;
+    uint8_t aux_result[2] = {0, 0};
+    i2c_bus_read_bytes(i2c_handle, 0x30, &regbuf, 1, gain_result, 2);
+
+    regbuf = 0x14;
+    txbuf[0] = 0x1; // AUXEN = 1
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
+
+    ESP_LOGE(TAG, "Codec get base AUX reading complete: 0x%" PRIx8 "%" PRIx8, aux_result[0], aux_result[1]);
+
     ESP_LOGE(TAG, "Codec shutdown");
     // Force the device into shutdown and disable the DACs
     regbuf = 0x17;
@@ -85,15 +168,22 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     // Configure volume
     ESP_LOGE(TAG, "Codec Volume");
     regbuf = 0x10;
-    txbuf[0] = 0x20;
-    txbuf[1] = 0x20;
+    txbuf[0] = (50 - s_volume);
+    txbuf[1] = (50 - s_volume);
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
+
+    // Configure the microphone
+    ESP_LOGE(TAG, "Codec Mic Enable");
+    regbuf = 0x12;
+    txbuf[0] = (1 << 5);
+    txbuf[1] = (0);
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
 
     // Configure headphone amplifier mode, take device out of shutdown, enable dacs
     ESP_LOGE(TAG, "Codec ACTIVATE");
     regbuf = 0x16;
-    txbuf[0] = 2;
-    txbuf[1] = (1 << 7) | (0x3 << 2);
+    txbuf[0] = (1 << 3) | 2;
+    txbuf[1] = (1 << 7) | (0x3 << 2) | (0x3);
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
 
     codec_init_flag  = true;
@@ -123,10 +213,17 @@ esp_err_t new_codec_set_voice_mute(bool mute)
 
 esp_err_t new_codec_set_voice_volume(int volume)
 {
+    uint8_t regbuf, txbuf[64];
+    s_volume = (volume / 2);
+    regbuf = 0x10;
+    txbuf[0] = (50 - s_volume);
+    txbuf[1] = (50 - s_volume);
+    i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
     return ESP_OK;
 }
 
 esp_err_t new_codec_get_voice_volume(int *volume)
 {
+    *volume = (s_volume * 2);
     return ESP_OK;
 }

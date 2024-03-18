@@ -10,7 +10,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
 
 #include "audio_element.h"
@@ -19,6 +21,7 @@
 #include "audio_common.h"
 #include "fatfs_stream.h"
 #include "i2s_stream.h"
+#include "flac_decoder.h"
 #include "mp3_decoder.h"
 #include "filter_resample.h"
 
@@ -33,11 +36,29 @@
 #include "sdcard_list.h"
 #include "sdcard_scan.h"
 
-static const char *TAG = "SDCARD_MP3_CONTROL_EXAMPLE";
+#include "driver/i2c.h"
 
-audio_pipeline_handle_t pipeline;
-audio_element_handle_t i2s_stream_writer, mp3_decoder, fatfs_stream_reader;
-playlist_operator_handle_t sdcard_list_handle = NULL;
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "lvgl.h"
+#include "esp_lvgl_port.h"
+#include "esp_lcd_panel_vendor.h"
+
+#include "lvgl.h"
+#include "ui_common.h"
+#include "ui_mm.h"
+#include "ui_np.h"
+
+static const char *TAG = "MAIN";
+
+#define SSD1306_H_RES 128
+#define SSD1306_V_RES 64
+
+
+static audio_pipeline_handle_t pipeline;
+static audio_element_handle_t i2s_stream_writer, flac_decoder, fatfs_stream_reader;
+static playlist_operator_handle_t sdcard_list_handle = NULL;
+static int32_t sdcard_list_size = -1;
 
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)
 {
@@ -45,68 +66,53 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
            to start, pause, resume, finish current song and adjust volume
         */
     audio_board_handle_t board_handle = (audio_board_handle_t) ctx;
+
     int player_volume;
     audio_hal_get_volume(board_handle->audio_hal, &player_volume);
 
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
-//        ESP_LOGI(TAG, "[ * ] input key id is %d", (int)evt->data);
         switch ((int)evt->data) {
-            case INPUT_KEY_USER_ID_PLAY:
-                ESP_LOGI(TAG, "[ * ] [Play] input key event");
-                audio_element_state_t el_state = audio_element_get_state(i2s_stream_writer);
-                switch (el_state) {
-                    case AEL_STATE_INIT :
-                        ESP_LOGI(TAG, "[ * ] Starting audio pipeline");
-                        audio_pipeline_run(pipeline);
-                        break;
-                    case AEL_STATE_RUNNING :
-                        ESP_LOGI(TAG, "[ * ] Pausing audio pipeline");
-                        audio_pipeline_pause(pipeline);
-                        break;
-                    case AEL_STATE_PAUSED :
-                        ESP_LOGI(TAG, "[ * ] Resuming audio pipeline");
-                        audio_pipeline_resume(pipeline);
-                        break;
-                    default :
-                        ESP_LOGI(TAG, "[ * ] Not supported state %d", el_state);
-                }
-                break;
-            case INPUT_KEY_USER_ID_SET:
+            case INPUT_KEY_USER_ID_RIGHT:
                 ESP_LOGI(TAG, "[ * ] [Set] input key event");
                 ESP_LOGI(TAG, "[ * ] Stopped, advancing to the next song");
                 char *url = NULL;
                 audio_pipeline_stop(pipeline);
                 audio_pipeline_wait_for_stop(pipeline);
                 audio_pipeline_terminate(pipeline);
-                sdcard_list_next(sdcard_list_handle, 1, &url);
-                ESP_LOGW(TAG, "URL: %s", url);
+                uint32_t rn = esp_random() % (uint32_t)sdcard_list_size;
+                if (ESP_FAIL == sdcard_list_choose(sdcard_list_handle, rn, &url)) {
+                    ESP_LOGE(TAG, "SHIT!");
+                }
+                ui_np_set_song_title(url);
+                ESP_LOGI(TAG, "URL: %s", url);
                 audio_element_set_uri(fatfs_stream_reader, url);
                 audio_pipeline_reset_ringbuffer(pipeline);
                 audio_pipeline_reset_elements(pipeline);
                 audio_pipeline_run(pipeline);
                 break;
-            case INPUT_KEY_USER_ID_VOLUP:
-//                ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
-//                player_volume += 10;
-//                if (player_volume > 100) {
-//                    player_volume = 100;
-//                }
-//                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-//                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+            case INPUT_KEY_USER_ID_UP:
+                ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
+                player_volume += 2;
+                if (player_volume > 100) {
+                    player_volume = 100;
+                }
+                audio_hal_set_volume(board_handle->audio_hal, player_volume);
+                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
                 break;
-            case INPUT_KEY_USER_ID_VOLDOWN:
-//                ESP_LOGI(TAG, "[ * ] [Vol-] input key event");
-//                player_volume -= 10;
-//                if (player_volume < 0) {
-//                    player_volume = 0;
-//                }
-//                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-//                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+            case INPUT_KEY_USER_ID_DOWN:
+                ESP_LOGI(TAG, "[ * ] [Vol-] input key event");
+                player_volume -= 2;
+                if (player_volume < 0) {
+                    player_volume = 0;
+                }
+                audio_hal_set_volume(board_handle->audio_hal, player_volume);
+                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
                 break;
         }
     }
-
-    return ESP_OK;
+    return ui_mm_handle_input(handle, evt, board_handle);
+//
+//    return ESP_OK;
 }
 
 void sdcard_url_save_cb(void *user_data, char *url)
@@ -136,11 +142,7 @@ void app_main(void)
     audio_board_key_init(set);
     audio_board_sdcard_init(set, SD_MODE_4_LINE);
 
-    ESP_LOGI(TAG, "[1.2] Set up a sdcard playlist and scan sdcard music save to it");
-    sdcard_list_create(&sdcard_list_handle);
-    sdcard_scan(sdcard_url_save_cb, "/sdcard", 0, (const char *[]) {"mp3"}, 1, sdcard_list_handle);
-    sdcard_list_show(sdcard_list_handle);
-
+    // We set the i2s stream early because the codec runs on mclk
     ESP_LOGI(TAG, "[4.1] Create i2s stream to write data to codec chip");
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.i2s_config.sample_rate = 48000;
@@ -159,30 +161,50 @@ void app_main(void)
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);
     periph_service_set_callback(input_ser, input_key_service_cb, (void *)board_handle);
 
+    ESP_LOGI(TAG, "[1.2] Set up a sdcard playlist and scan sdcard music save to it");
+    sdcard_list_create(&sdcard_list_handle);
+    sdcard_scan(sdcard_url_save_cb, "/sdcard/", 4, (const char *[]) {"flac"}, 1, sdcard_list_handle);
+    sdcard_list_show(sdcard_list_handle);
+
     ESP_LOGI(TAG, "[4.0] Create audio pipeline for playback");
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
     pipeline = audio_pipeline_init(&pipeline_cfg);
     mem_assert(pipeline);
 
-    ESP_LOGI(TAG, "[4.2] Create mp3 decoder to decode mp3 file");
-    mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-    mp3_decoder = mp3_decoder_init(&mp3_cfg);
+    // ESP_LOGI(TAG, "[4.2] Create mp3 decoder to decode mp3 file");
+    // mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+    // mp3_cfg.out_rb_size = (8 * 1024);
+    // mp3_cfg.stack_in_ext = true;
+    // mp3_decoder = mp3_decoder_init(&mp3_cfg);
+
+    ESP_LOGI(TAG, "[4.2] Create flac decoder");
+    flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
+    flac_cfg.out_rb_size = (16 * 1024);
+    flac_cfg.stack_in_ext = true;
+    flac_decoder = flac_decoder_init(&flac_cfg);
 
     ESP_LOGI(TAG, "[4.3] Create fatfs stream to read data from sdcard");
     char *url = NULL;
-    sdcard_list_current(sdcard_list_handle, &url);
+    sdcard_list_size = sdcard_list_get_url_num(sdcard_list_handle);
+    uint32_t rn = esp_random() % (uint32_t)sdcard_list_size;
+    if (ESP_FAIL == sdcard_list_choose(sdcard_list_handle, rn, &url)) {
+        ESP_LOGE(TAG, "SHIT!");
+    }
+    ESP_LOGI(TAG, "%s", url);
+    ui_np_set_song_title(url);
     fatfs_stream_cfg_t fatfs_cfg = FATFS_STREAM_CFG_DEFAULT();
     fatfs_cfg.type = AUDIO_STREAM_READER;
+    fatfs_cfg.out_rb_size = (8 * 1024);
     fatfs_stream_reader = fatfs_stream_init(&fatfs_cfg);
     audio_element_set_uri(fatfs_stream_reader, url);
 
     ESP_LOGI(TAG, "[4.4] Register all elements to audio pipeline");
     audio_pipeline_register(pipeline, fatfs_stream_reader, "file");
-    audio_pipeline_register(pipeline, mp3_decoder, "mp3");
+    audio_pipeline_register(pipeline, flac_decoder, "flac");
     audio_pipeline_register(pipeline, i2s_stream_writer, "i2s");
 
-    ESP_LOGI(TAG, "[4.6] Link it together [sdcard]-->fatfs_stream-->mp3_decoder-->i2s_stream-->[codec_chip]");
-    const char *link_tag[3] = {"file", "mp3", "i2s"};
+    ESP_LOGI(TAG, "[4.6] Link it together [sdcard]-->fatfs_stream-->flac_decoder-->i2s_stream-->[codec_chip]");
+    const char *link_tag[3] = {"file", "flac", "i2s"};
     audio_pipeline_link(pipeline, &link_tag[0], 3);
 
     ESP_LOGI(TAG, "[5.0] Set up  event listener");
@@ -192,9 +214,58 @@ void app_main(void)
     ESP_LOGI(TAG, "[5.1] Listen for all pipeline events");
     audio_pipeline_set_listener(pipeline, evt);
 
-    ESP_LOGW(TAG, "[ 6 ] Press the keys to control music player:");
-    ESP_LOGW(TAG, "      [Play] to start, pause and resume, [Set] next song.");
-    ESP_LOGW(TAG, "      [Vol-] or [Vol+] to adjust volume.");
+    // XXX HACK FIXME
+    ESP_LOGI(TAG, "Install panel IO");
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    esp_lcd_panel_io_i2c_config_t io_config = {
+        .dev_addr = 0x3D,
+        .control_phase_bytes = 1,               // According to SSD1306 datasheet
+        .lcd_cmd_bits = 8,                      // According to SSD1306 datasheet
+        .lcd_param_bits = 8,                    // According to SSD1306 datasheet
+        .dc_bit_offset = 6,                     // According to SSD1306 datasheet
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)0, &io_config, &io_handle));
+
+    ESP_LOGI(TAG, "Install SSD1306 panel driver");
+    esp_lcd_panel_handle_t panel_handle = NULL;
+    esp_lcd_panel_dev_config_t panel_config = {
+        .bits_per_pixel = 1,
+        .reset_gpio_num = GPIO_NUM_21,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(io_handle, &panel_config, &panel_handle));
+
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+
+    ESP_LOGI(TAG, "Initialize LVGL");
+    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_port_init(&lvgl_cfg);
+
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle = io_handle,
+        .panel_handle = panel_handle,
+        .buffer_size = SSD1306_H_RES * SSD1306_V_RES,
+        .double_buffer = true,
+        .hres = SSD1306_H_RES,
+        .vres = SSD1306_V_RES,
+        .monochrome = true,
+        .rotation = {
+            .swap_xy = false,
+            .mirror_x = false,
+            .mirror_y = false,
+        }
+    };
+    lv_disp_t * disp = lvgl_port_add_disp(&disp_cfg);
+
+    /* Rotation of the screen */
+    lv_disp_set_rotation(disp, LV_DISP_ROT_NONE);
+
+    ui_common_init(disp);
+    ui_mm_init();
+    // XXX HACK FIXME
+
+    audio_pipeline_run(pipeline);
 
     while (1) {
         /* Handle event interface messages from pipeline
@@ -208,11 +279,11 @@ void app_main(void)
         }
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
             // Set music info for a new song to be played
-            if (msg.source == (void *) mp3_decoder
+            if (msg.source == (void *) flac_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
                 audio_element_info_t music_info = {0};
-                audio_element_getinfo(mp3_decoder, &music_info);
-                ESP_LOGI(TAG, "[ * ] Received music info from mp3 decoder, sample_rates=%d, bits=%d, ch=%d",
+                audio_element_getinfo(flac_decoder, &music_info);
+                ESP_LOGI(TAG, "[ * ] Received music info from flac decoder, sample_rates=%d, bits=%d, ch=%d",
                          music_info.sample_rates, music_info.bits, music_info.channels);
                 i2s_stream_set_clk(i2s_stream_writer, music_info.sample_rates, music_info.bits, music_info.channels);
                 audio_element_setinfo(i2s_stream_writer, &music_info);
@@ -224,8 +295,12 @@ void app_main(void)
                 audio_element_state_t el_state = audio_element_get_state(i2s_stream_writer);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
-                    sdcard_list_next(sdcard_list_handle, 1, &url);
-                    ESP_LOGW(TAG, "URL: %s", url);
+                    uint32_t rn = esp_random() % (uint32_t)sdcard_list_size;
+                    if (ESP_FAIL == sdcard_list_choose(sdcard_list_handle, rn, &url)) {
+                        ESP_LOGE(TAG, "SHIT!");
+                    }
+                    ui_np_set_song_title(url);
+                    ESP_LOGI(TAG, "URL: %s", url);
                     /* In previous versions, audio_pipeline_terminal() was called here. It will close all the element task and when we use
                      * the pipeline next time, all the tasks should be restarted again. It wastes too much time when we switch to another music.
                      * So we use another method to achieve this as below.
@@ -246,7 +321,7 @@ void app_main(void)
     audio_pipeline_wait_for_stop(pipeline);
     audio_pipeline_terminate(pipeline);
 
-    audio_pipeline_unregister(pipeline, mp3_decoder);
+    audio_pipeline_unregister(pipeline, flac_decoder);
     audio_pipeline_unregister(pipeline, i2s_stream_writer);
 
     /* Terminate the pipeline before removing the listener */
@@ -263,7 +338,7 @@ void app_main(void)
     sdcard_list_destroy(sdcard_list_handle);
     audio_pipeline_deinit(pipeline);
     audio_element_deinit(i2s_stream_writer);
-    audio_element_deinit(mp3_decoder);
+    audio_element_deinit(flac_decoder);
     periph_service_destroy(input_ser);
     esp_periph_set_destroy(set);
 }
