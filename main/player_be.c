@@ -5,7 +5,9 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "esp_random.h"
 
+// ESP-ADF stuff
 #include "audio_element.h"
 #include "audio_pipeline.h"
 #include "audio_event_iface.h"
@@ -33,9 +35,14 @@ static const char *TAG = "PLAYER_BE";
 
 // internal queue used to manage new playlists
 static QueueHandle_t s_player_be_queue = NULL;
+
 static playlist_operator_handle_t s_playlist = NULL;
+static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL 
+static uint32_t s_playlist_len = 0;
+
 static audio_pipeline_handle_t s_pipeline = NULL;
 static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream;
+static bool s_playmode_is_shuffle = true;
 
 typedef enum {
     AUD_EXT_UNKNOWN = 0,
@@ -90,19 +97,33 @@ BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType
     return xQueueSendToBack(s_player_be_queue, &new_playlist, ticksToWait);
 }
 
-//void player_next(void) {
-//    char *url = NULL;
-//    audio_pipeline_stop(pipeline);
-//    audio_pipeline_wait_for_stop(pipeline);
-//    audio_pipeline_terminate(pipeline);
-//    ui_np_set_song_title(url);
-//    ESP_LOGI(TAG, "URL: %s", url);
-//    audio_element_set_uri(fatfs_stream_reader, url);
-//    audio_pipeline_reset_ringbuffer(pipeline);
-//    audio_pipeline_reset_elements(pipeline);
-//    audio_pipeline_run(pipeline);
-//    break;
-//}
+esp_err_t player_next(void) {
+    if (s_playlist == NULL) {
+        return ESP_FAIL;
+    }
+    char *url = NULL;
+    audio_pipeline_stop(s_pipeline);
+    audio_pipeline_wait_for_stop(s_pipeline);
+    audio_pipeline_terminate(s_pipeline);
+    if (s_playmode_is_shuffle) {
+        uint32_t next_song = esp_random() % s_playlist_len;
+        s_pl_oper.choose(s_playlist, next_song, &url);
+    } else {
+        s_pl_oper.current(s_playlist, &url);
+    }
+    ESP_LOGI(TAG, "URL: %s", url);
+    audio_element_set_uri(s_fs_stream, url);
+    audio_pipeline_reset_ringbuffer(s_pipeline);
+    audio_pipeline_reset_elements(s_pipeline);
+    audio_pipeline_run(s_pipeline);
+
+    return ESP_OK;
+}
+
+esp_err_t player_set_shuffle(bool is_shuffle) {
+    s_playmode_is_shuffle = is_shuffle;
+    return ESP_OK;
+}
 
 void player_main(void) {
     s_player_be_queue = xQueueCreate(1, sizeof(playlist_operator_t));
@@ -127,12 +148,18 @@ void player_main(void) {
     while (s_playlist == NULL) {
         xQueueReceive(s_player_be_queue, &s_playlist, portMAX_DELAY);
     }
-    playlist_operation_t pl_oper;
-    s_playlist->get_operation(&pl_oper);
+    // Now that we have a valid playlist, setup our associated data
+    s_playlist->get_operation(&s_pl_oper);
+    s_playlist_len = (uint32_t)s_pl_oper.get_url_num(s_playlist);
 
-    // Now that we have a playlist, set the fatfs stream to point at the start
+    // set the fatfs stream to point at the start
     char *url = NULL;
-    pl_oper.current(s_playlist, &url);
+    if (s_playmode_is_shuffle) {
+        uint32_t next_song = esp_random() % s_playlist_len;
+        s_pl_oper.choose(s_playlist, next_song, &url);
+    } else {
+        s_pl_oper.current(s_playlist, &url);
+    }
     audio_element_set_uri(s_fs_stream, url);
 
     audio_extension_e ext = player_get_ext(url);
@@ -215,7 +242,12 @@ void player_main(void) {
                 audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
-                    pl_oper.next(s_playlist, 1, &url);
+                    if (s_playmode_is_shuffle) {
+                        uint32_t next_song = esp_random() % s_playlist_len;
+                        s_pl_oper.choose(s_playlist, next_song, &url);
+                    } else {
+                        s_pl_oper.next(s_playlist, 1, &url);
+                    }
                     ESP_LOGI(TAG, "URL: %s", url);
                     audio_element_set_uri(s_fs_stream, url);
                     audio_pipeline_reset_ringbuffer(s_pipeline);

@@ -70,7 +70,9 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
 
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
         switch ((int)evt->data) {
-//            case INPUT_KEY_USER_ID_RIGHT:
+            case INPUT_KEY_USER_ID_RIGHT:
+                player_next();
+                break;
             case INPUT_KEY_USER_ID_UP:
                 ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
                 player_volume += 2;
