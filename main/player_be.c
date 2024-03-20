@@ -24,10 +24,15 @@
 #include "aac_decoder.h"
 
 #include "esp_peripherals.h"
+#include "periph_service.h"
 #include "periph_sdcard.h"
 #include "playlist.h"
 #include "sdcard_list.h"
 #include "board.h"
+
+#include "lvgl.h"
+#include "ui_common.h"
+#include "ui_np.h"
 
 #define PLAYER_DECODE_IN_PSRAM (true)
 
@@ -97,6 +102,29 @@ BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType
     return xQueueSendToBack(s_player_be_queue, &new_playlist, ticksToWait);
 }
 
+esp_err_t player_playpause(void) {
+    audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
+    switch (el_state) {
+        case AEL_STATE_INIT :
+            ESP_LOGI(TAG, "Starting audio pipeline");
+            audio_pipeline_run(s_pipeline);
+            break;
+        case AEL_STATE_RUNNING :
+            ESP_LOGI(TAG, "Pausing audio pipeline");
+            audio_pipeline_pause(s_pipeline);
+            break;
+        case AEL_STATE_PAUSED :
+            ESP_LOGI(TAG, "Resuming audio pipeline");
+            audio_pipeline_resume(s_pipeline);
+            break;
+        default :
+            ESP_LOGI(TAG, "Unsupported state %d", el_state);
+            return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
 esp_err_t player_next(void) {
     if (s_playlist == NULL) {
         return ESP_FAIL;
@@ -112,6 +140,7 @@ esp_err_t player_next(void) {
         s_pl_oper.current(s_playlist, &url);
     }
     ESP_LOGI(TAG, "URL: %s", url);
+    ui_np_set_song_title(url);
     audio_element_set_uri(s_fs_stream, url);
     audio_pipeline_reset_ringbuffer(s_pipeline);
     audio_pipeline_reset_elements(s_pipeline);
@@ -160,6 +189,7 @@ void player_main(void) {
     } else {
         s_pl_oper.current(s_playlist, &url);
     }
+    ui_np_set_song_title(url);
     audio_element_set_uri(s_fs_stream, url);
 
     audio_extension_e ext = player_get_ext(url);
@@ -217,7 +247,7 @@ void player_main(void) {
 
     audio_pipeline_set_listener(s_pipeline, evt);
 
-    audio_pipeline_run(s_pipeline);
+    // audio_pipeline_run(s_pipeline);
 
     while (1) {
         audio_event_iface_msg_t msg;

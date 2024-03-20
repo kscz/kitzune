@@ -55,8 +55,8 @@ static const char *TAG = "MAIN";
 #define SSD1306_H_RES 128
 #define SSD1306_V_RES 64
 
-static audio_pipeline_handle_t pipeline;
-static int32_t sdcard_list_size = -1;
+static disp_state_t s_cur_disp_state = DS_MAIN_MENU;
+static disp_state_t s_prev_disp_state = DS_MAIN_MENU;
 
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)
 {
@@ -65,37 +65,35 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         */
     audio_board_handle_t board_handle = (audio_board_handle_t) ctx;
 
-    int player_volume;
-    audio_hal_get_volume(board_handle->audio_hal, &player_volume);
+    disp_state_t next_state = DS_NO_CHANGE;
+    switch(s_cur_disp_state) {
+        case DS_MAIN_MENU:
+            next_state = ui_mm_handle_input(handle, evt, board_handle);
+            break;
+        case DS_NOW_PLAYING:
+            next_state = ui_np_handle_input(handle, evt, board_handle);
+            break;
+        default:
+            return ESP_FAIL;
+    }
 
-    if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
-        switch ((int)evt->data) {
-            case INPUT_KEY_USER_ID_RIGHT:
-                player_next();
+    if (next_state != DS_NO_CHANGE && next_state != s_cur_disp_state) {
+        s_prev_disp_state = s_cur_disp_state;
+        s_cur_disp_state = next_state;
+
+        switch(s_cur_disp_state) {
+            case DS_MAIN_MENU:
+                lv_scr_load(ui_mm_get_screen());
                 break;
-            case INPUT_KEY_USER_ID_UP:
-                ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
-                player_volume += 2;
-                if (player_volume > 100) {
-                    player_volume = 100;
-                }
-                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+            case DS_NOW_PLAYING:
+                lv_scr_load(ui_np_get_screen());
                 break;
-            case INPUT_KEY_USER_ID_DOWN:
-                ESP_LOGI(TAG, "[ * ] [Vol-] input key event");
-                player_volume -= 2;
-                if (player_volume < 0) {
-                    player_volume = 0;
-                }
-                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
-                break;
+            default:
+                lv_scr_load(ui_mm_get_screen());
         }
     }
-    return ui_mm_handle_input(handle, evt, board_handle);
-//
-//    return ESP_OK;
+
+    return ESP_OK;
 }
 
 void sdcard_url_save_cb(void *user_data, char *url)
@@ -195,6 +193,7 @@ void app_main(void)
 
     ui_common_init(disp);
     ui_mm_init();
+    ui_np_init();
 
     while(1) {
         vTaskDelay(portMAX_DELAY);
