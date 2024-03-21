@@ -279,6 +279,7 @@ void player_main(void) {
                         s_pl_oper.next(s_playlist, 1, &url);
                     }
                     ESP_LOGI(TAG, "URL: %s", url);
+                    ui_np_set_song_title(url);
                     audio_element_set_uri(s_fs_stream, url);
                     audio_pipeline_reset_ringbuffer(s_pipeline);
                     audio_pipeline_reset_elements(s_pipeline);

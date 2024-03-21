@@ -74,7 +74,7 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     txbuf[0] = 0;
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
 
-    // Calibrate ADC offset
+    // Shut off the ADC
     regbuf = 0x14;
     txbuf[0] = 0x0;
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
@@ -91,7 +91,7 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     // Diable JDETEN
     ESP_LOGE(TAG, "Codec disable JDETEN, enable ADCs, calibration start");
     regbuf = 0x16;
-    txbuf[0] = 2;
+    txbuf[0] = 2; // Headphones set to capless, JDETEN = 0
     txbuf[1] = 0x80 | 0x3; // enable ADCs, !SHDN = 1
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 2);
 
@@ -101,11 +101,11 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     txbuf[0] = 0x3; // AUXEN = 1, AUXCAL = 1
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
 
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(40));
 
     ESP_LOGE(TAG, "Codec offset calibration complete");
     regbuf = 0x14;
-    txbuf[0] = 0x0; // AUXEN = 0, AUXCAL = 0
+    txbuf[0] = 0x1; // AUXEN = 1, AUXCAL = 0
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
 
     ESP_LOGE(TAG, "Codec gain calibration");
@@ -113,7 +113,7 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     txbuf[0] = 0x5; // AUXEN = 1, AUXGAIN = 1
     i2c_bus_write_bytes(i2c_handle, 0x30, &regbuf, 1, txbuf, 1);
 
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(40));
 
     // Set AUXCAP to freeze result...
     regbuf = 0x14;
@@ -132,7 +132,7 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
 
     // Get a baseline reading for AUX
     ESP_LOGE(TAG, "Codec get base AUX reading");
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(40));
 
     // Freeze base reading
     regbuf = 0x14;
