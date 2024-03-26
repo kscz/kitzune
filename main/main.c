@@ -45,6 +45,7 @@
 #include "esp_lcd_panel_vendor.h"
 
 #include "lvgl.h"
+#include "bt_be.h"
 #include "player_be.h"
 #include "ui_common.h"
 #include "ui_mm.h"
@@ -66,15 +67,31 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
     audio_board_handle_t board_handle = (audio_board_handle_t) ctx;
 
     disp_state_t next_state = DS_NO_CHANGE;
-    switch(s_cur_disp_state) {
-        case DS_MAIN_MENU:
-            next_state = ui_mm_handle_input(handle, evt, board_handle);
-            break;
-        case DS_NOW_PLAYING:
-            next_state = ui_np_handle_input(handle, evt, board_handle);
-            break;
-        default:
-            return ESP_FAIL;
+    if (evt->type == INPUT_KEY_SERVICE_ACTION_PRESS) {
+        switch ((int)evt->data) {
+            case INPUT_KEY_USER_ID_CENTER:
+                if (s_cur_disp_state == DS_MAIN_MENU) {
+                    next_state = s_prev_disp_state;
+                } else {
+                    next_state = DS_MAIN_MENU;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (next_state == DS_NO_CHANGE) {
+        switch(s_cur_disp_state) {
+            case DS_MAIN_MENU:
+                next_state = ui_mm_handle_input(handle, evt, board_handle);
+                break;
+            case DS_NOW_PLAYING:
+                next_state = ui_np_handle_input(handle, evt, board_handle);
+                break;
+            default:
+                return ESP_FAIL;
+        }
     }
 
     if (next_state != DS_NO_CHANGE && next_state != s_cur_disp_state) {
@@ -82,14 +99,13 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         s_cur_disp_state = next_state;
 
         switch(s_cur_disp_state) {
-            case DS_MAIN_MENU:
-                lv_scr_load(ui_mm_get_screen());
-                break;
             case DS_NOW_PLAYING:
-                lv_scr_load(ui_np_get_screen());
+                lv_scr_load_anim(ui_np_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
                 break;
+            case DS_MAIN_MENU:
             default:
-                lv_scr_load(ui_mm_get_screen());
+                lv_scr_load_anim(ui_mm_get_screen(), LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, false);
+                break;
         }
     }
 
@@ -107,7 +123,14 @@ void sdcard_url_save_cb(void *user_data, char *url)
 
 void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_WARN);
+    /* Initialize NVS — it is used to store PHY calibration data and save key-value pairs in flash memory*/
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+
     esp_log_level_set(TAG, ESP_LOG_INFO);
 
     /* This GPIO controls the SDMMC pullups - pull them up! */
@@ -194,6 +217,8 @@ void app_main(void)
     ui_common_init(disp);
     ui_mm_init();
     ui_np_init();
+
+    bt_be_init();
 
     while(1) {
         vTaskDelay(portMAX_DELAY);

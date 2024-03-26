@@ -36,19 +36,6 @@
 
 #define PLAYER_DECODE_IN_PSRAM (true)
 
-static const char *TAG = "PLAYER_BE";
-
-// internal queue used to manage new playlists
-static QueueHandle_t s_player_be_queue = NULL;
-
-static playlist_operator_handle_t s_playlist = NULL;
-static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL 
-static uint32_t s_playlist_len = 0;
-
-static audio_pipeline_handle_t s_pipeline = NULL;
-static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream;
-static bool s_playmode_is_shuffle = true;
-
 typedef enum {
     AUD_EXT_UNKNOWN = 0,
     AUD_EXT_MP3,
@@ -61,6 +48,20 @@ typedef enum {
     AUD_EXT_M4A,
     AUD_EXT_TS,
 } audio_extension_e;
+
+static const char *TAG = "PLAYER_BE";
+
+// internal queue used to manage new playlists
+static QueueHandle_t s_player_be_queue = NULL;
+
+static playlist_operator_handle_t s_playlist = NULL;
+static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL 
+static uint32_t s_playlist_len = 0;
+
+static audio_pipeline_handle_t s_pipeline = NULL;
+static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream;
+static audio_extension_e s_current_decoder = AUD_EXT_UNKNOWN;
+static bool s_playmode_is_shuffle = true;
 
 static audio_extension_e player_get_ext(const char *url) {
     // Search for the extension part of the URL
@@ -123,6 +124,54 @@ esp_err_t player_playpause(void) {
     }
 
     return ESP_OK;
+}
+
+static void set_decoder(audio_extension_e ext) {
+    switch (ext) {
+        case AUD_EXT_MP3:
+            mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+            mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream = mp3_decoder_init(&mp3_cfg);
+            s_current_decoder = ext;
+            break;
+        case AUD_EXT_FLAC:
+            flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
+            flac_cfg.out_rb_size = (16 * 1024);
+            flac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream  = flac_decoder_init(&flac_cfg);
+            s_current_decoder = ext;
+            break;
+        case AUD_EXT_OPUS:
+            opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
+            opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream  = decoder_opus_init(&opus_cfg);
+            s_current_decoder = ext;
+            break;
+        case AUD_EXT_OGG:
+            ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
+            ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream  = ogg_decoder_init(&ogg_cfg);
+            s_current_decoder = ext;
+            break;
+        case AUD_EXT_WAV:
+            wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
+            wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream  = wav_decoder_init(&wav_cfg);
+            s_current_decoder = ext;
+            break;
+        case AUD_EXT_MP4:
+        case AUD_EXT_AAC:
+        case AUD_EXT_M4A:
+        case AUD_EXT_TS:
+            aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
+            aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+            s_decode_stream  = aac_decoder_init(&aac_cfg);
+            s_current_decoder = ext;
+            break;
+        default:
+            s_decode_stream = NULL;
+            s_current_decoder = AUD_EXT_UNKNOWN;
+    }
 }
 
 esp_err_t player_next(void) {
@@ -193,45 +242,7 @@ void player_main(void) {
     audio_element_set_uri(s_fs_stream, url);
 
     audio_extension_e ext = player_get_ext(url);
-
-    switch (ext) {
-        case AUD_EXT_MP3:
-            mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-            mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream = mp3_decoder_init(&mp3_cfg);
-            break;
-        case AUD_EXT_FLAC:
-            flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
-            flac_cfg.out_rb_size = (16 * 1024);
-            flac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = flac_decoder_init(&flac_cfg);
-            break;
-        case AUD_EXT_OPUS:
-            opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
-            opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = decoder_opus_init(&opus_cfg);
-            break;
-        case AUD_EXT_OGG:
-            ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
-            ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = ogg_decoder_init(&ogg_cfg);
-            break;
-        case AUD_EXT_WAV:
-            wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
-            wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = wav_decoder_init(&wav_cfg);;
-            break;
-        case AUD_EXT_MP4:
-        case AUD_EXT_AAC:
-        case AUD_EXT_M4A:
-        case AUD_EXT_TS:
-            aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
-            aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = aac_decoder_init(&aac_cfg);
-            break;
-        default:
-            s_decode_stream = NULL;
-    }
+    set_decoder(ext);
 
     // at this point we should have everything we need to start playing!
     // build up the pipeline!
@@ -246,8 +257,6 @@ void player_main(void) {
     audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
 
     audio_pipeline_set_listener(s_pipeline, evt);
-
-    // audio_pipeline_run(s_pipeline);
 
     while (1) {
         audio_event_iface_msg_t msg;
@@ -280,13 +289,46 @@ void player_main(void) {
                     }
                     ESP_LOGI(TAG, "URL: %s", url);
                     ui_np_set_song_title(url);
-                    audio_element_set_uri(s_fs_stream, url);
-                    audio_pipeline_reset_ringbuffer(s_pipeline);
-                    audio_pipeline_reset_elements(s_pipeline);
-                    audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
-                    audio_pipeline_run(s_pipeline);
+
+                    ext = player_get_ext(url);
+                    if (s_current_decoder == ext) {
+                        audio_element_set_uri(s_fs_stream, url);
+                        audio_pipeline_reset_ringbuffer(s_pipeline);
+                        audio_pipeline_reset_elements(s_pipeline);
+                        audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
+                        audio_pipeline_run(s_pipeline);
+                    } else {
+                        ESP_LOGI(TAG, "[ * ] Terminating and rebuilding pipeline...");
+
+                        // The stop should be unnecessary, but we do it for completeness
+                        audio_pipeline_stop(s_pipeline);
+                        audio_pipeline_wait_for_stop(s_pipeline);
+
+                        // Terminate
+                        audio_pipeline_terminate(s_pipeline);
+
+                        // Remove the listeners before we unregister
+                        audio_pipeline_remove_listener(s_pipeline);
+
+                        audio_pipeline_unregister(s_pipeline, s_hp_stream);
+                        audio_pipeline_unregister(s_pipeline, s_decode_stream);
+                        audio_pipeline_unregister(s_pipeline, s_fs_stream);
+
+                        audio_element_deinit(s_decode_stream);
+                        set_decoder(ext);
+
+                        audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
+                        audio_pipeline_register(s_pipeline, s_decode_stream, "dec");
+                        audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
+
+                        audio_pipeline_link(s_pipeline, &link_tag[0], 3);
+
+                        audio_element_set_uri(s_fs_stream, url);
+                        audio_pipeline_set_listener(s_pipeline, evt);
+
+                        audio_pipeline_run(s_pipeline);
+                    }
                 }
-                continue;
             }
         }
     }
