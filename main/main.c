@@ -170,6 +170,9 @@ void app_main(void)
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);
     periph_service_set_callback(input_ser, input_key_service_cb, (void *)board_handle);
 
+    bt_be_init();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     ESP_LOGI(TAG, "[3.7] Create bt peripheral");
     esp_periph_handle_t bt_periph = bt_create_periph();
 
@@ -232,8 +235,6 @@ void app_main(void)
     ui_mm_init();
     ui_np_init();
     ui_bt_init();
-
-    bt_be_init();
 
     while(1) {
         vTaskDelay(portMAX_DELAY);
