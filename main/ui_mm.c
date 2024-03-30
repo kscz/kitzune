@@ -70,6 +70,8 @@ disp_state_t ui_mm_handle_input(periph_service_handle_t handle, periph_service_e
             case INPUT_KEY_USER_ID_CENTER:
                 if (s_cur_pos == 0) {
                     return DS_NOW_PLAYING;
+                } else if (s_cur_pos == 6) {
+                    return DS_BLUETOOTH;
                 }
                 break;
             case INPUT_KEY_USER_ID_LEFT:

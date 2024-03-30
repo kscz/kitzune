@@ -32,6 +32,7 @@
 #include "input_key_service.h"
 #include "periph_adc_button.h"
 #include "board.h"
+#include "a2dp_stream.h"
 
 #include "sdcard_list.h"
 #include "sdcard_scan.h"
@@ -50,6 +51,7 @@
 #include "ui_common.h"
 #include "ui_mm.h"
 #include "ui_np.h"
+#include "ui_bt.h"
 
 static const char *TAG = "MAIN";
 
@@ -89,6 +91,9 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
             case DS_NOW_PLAYING:
                 next_state = ui_np_handle_input(handle, evt, board_handle);
                 break;
+            case DS_BLUETOOTH:
+                next_state = ui_bt_handle_input(handle, evt, board_handle);
+                break;
             default:
                 return ESP_FAIL;
         }
@@ -101,6 +106,9 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         switch(s_cur_disp_state) {
             case DS_NOW_PLAYING:
                 lv_scr_load_anim(ui_np_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
+                break;
+            case DS_BLUETOOTH:
+                lv_scr_load_anim(ui_bt_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
                 break;
             case DS_MAIN_MENU:
             default:
@@ -162,6 +170,12 @@ void app_main(void)
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);
     periph_service_set_callback(input_ser, input_key_service_cb, (void *)board_handle);
 
+    ESP_LOGI(TAG, "[3.7] Create bt peripheral");
+    esp_periph_handle_t bt_periph = bt_create_periph();
+
+    ESP_LOGI(TAG, "[3.8] Start bt peripheral");
+    esp_periph_start(set, bt_periph);
+
     ESP_LOGI(TAG, "[1.2] Set up a sdcard playlist and scan sdcard music save to it");
     playlist_operator_handle_t sdcard_list_handle = NULL;
     sdcard_list_create(&sdcard_list_handle);
@@ -217,6 +231,7 @@ void app_main(void)
     ui_common_init(disp);
     ui_mm_init();
     ui_np_init();
+    ui_bt_init();
 
     bt_be_init();
 

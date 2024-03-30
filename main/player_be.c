@@ -11,7 +11,9 @@
 #include "audio_element.h"
 #include "audio_pipeline.h"
 #include "audio_event_iface.h"
-#include "audio_common.h"
+#include "audio_common.h""
+#include "esp_peripherals.h"
+#include "a2dp_stream.h"
 #include "fatfs_stream.h"
 #include "i2s_stream.h"
 
@@ -23,7 +25,6 @@
 #include "wav_decoder.h"
 #include "aac_decoder.h"
 
-#include "esp_peripherals.h"
 #include "periph_service.h"
 #include "periph_sdcard.h"
 #include "playlist.h"
@@ -59,7 +60,7 @@ static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL
 static uint32_t s_playlist_len = 0;
 
 static audio_pipeline_handle_t s_pipeline = NULL;
-static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream;
+static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream, s_bt_stream;
 static audio_extension_e s_current_decoder = AUD_EXT_UNKNOWN;
 static bool s_playmode_is_shuffle = true;
 
@@ -222,6 +223,13 @@ void player_main(void) {
     fatfs_cfg.type = AUDIO_STREAM_READER;
     s_fs_stream = fatfs_stream_init(&fatfs_cfg);
 
+    // initialize the bluetooth stream
+    a2dp_stream_config_t a2dp_config = {
+        .type = AUDIO_STREAM_WRITER,
+        .user_callback = {0},
+    };
+    s_bt_stream = a2dp_stream_init(&a2dp_config);
+
     // Loop until we get a valid playlist
     while (s_playlist == NULL) {
         xQueueReceive(s_player_be_queue, &s_playlist, portMAX_DELAY);
@@ -248,10 +256,13 @@ void player_main(void) {
     // build up the pipeline!
     audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
     audio_pipeline_register(s_pipeline, s_decode_stream, "dec");
-    audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
+    audio_pipeline_register(s_pipeline, s_bt_stream, "hp");
 
     const char *link_tag[3] = {"fs", "dec", "hp"};
     audio_pipeline_link(s_pipeline, &link_tag[0], 3);
+
+    ESP_LOGI(TAG, "[3.7] Create bt peripheral");
+    esp_periph_handle_t bt_periph = bt_create_periph();
 
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
@@ -271,14 +282,14 @@ void player_main(void) {
                 audio_element_getinfo(s_decode_stream, &music_info);
                 ESP_LOGI(TAG, "[ * ] Received music info from decoder, sample_rates=%d, bits=%d, ch=%d, dur=%d",
                          music_info.sample_rates, music_info.bits, music_info.channels, music_info.duration);
-                i2s_stream_set_clk(s_hp_stream, music_info.sample_rates, music_info.bits, music_info.channels);
-                audio_element_setinfo(s_hp_stream, &music_info);
+                //i2s_stream_set_clk(s_hp_stream, music_info.sample_rates, music_info.bits, music_info.channels);
+                audio_element_setinfo(s_bt_stream, &music_info);
                 continue;
             }
             // Advance to the next song when previous finishes
-            if (msg.source == (void *) s_hp_stream
+            if (msg.source == (void *) s_bt_stream
                 && msg.cmd == AEL_MSG_CMD_REPORT_STATUS) {
-                audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
+                audio_element_state_t el_state = audio_element_get_state(s_bt_stream);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
                     if (s_playmode_is_shuffle) {
@@ -315,6 +326,7 @@ void player_main(void) {
                         audio_pipeline_unregister(s_pipeline, s_fs_stream);
 
                         audio_element_deinit(s_decode_stream);
+                        //audio_event_iface_remove_listener(esp_periph_set_get_event_iface(set), evt);
                         set_decoder(ext);
 
                         audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
