@@ -56,7 +56,7 @@
 #define ESP_SD_PIN_CD             -1
 #define ESP_SD_PIN_WP             -1
 
-extern audio_hal_func_t AUDIO_NEW_CODEC_DEFAULT_HANDLE;
+extern audio_hal_func_t AUDIO_MAX9867_DEFAULT_HANDLE;
 
 #define AUDIO_CODEC_DEFAULT_CONFIG(){                   \
         .adc_input  = AUDIO_HAL_ADC_INPUT_LINE1,        \

@@ -28,32 +28,32 @@
 #include "board.h"
 #include "i2c_bus.h"
 
-#include "new_codec.h"
+#include "max9867.h"
 
-static const char *TAG = "new_codec";
+static const char *TAG = "MAX9867";
 
 static bool codec_init_flag = false;
 static i2c_bus_handle_t i2c_handle;
 static uint8_t s_volume = 25;
 
-audio_hal_func_t AUDIO_NEW_CODEC_DEFAULT_HANDLE = {
-    .audio_codec_initialize = new_codec_init,
-    .audio_codec_deinitialize = new_codec_deinit,
-    .audio_codec_ctrl = new_codec_ctrl_state,
-    .audio_codec_config_iface = new_codec_config_i2s,
-    .audio_codec_set_mute = new_codec_set_voice_mute,
-    .audio_codec_set_volume = new_codec_set_voice_volume,
-    .audio_codec_get_volume = new_codec_get_voice_volume,
+audio_hal_func_t AUDIO_MAX9867_DEFAULT_HANDLE = {
+    .audio_codec_initialize = max9867_init,
+    .audio_codec_deinitialize = max9867_deinit,
+    .audio_codec_ctrl = max9867_ctrl_state,
+    .audio_codec_config_iface = max9867_config_i2s,
+    .audio_codec_set_mute = max9867_set_voice_mute,
+    .audio_codec_set_volume = max9867_set_voice_volume,
+    .audio_codec_get_volume = max9867_get_voice_volume,
 };
 
-bool new_codec_initialized()
+bool max9867_initialized()
 {
     return codec_init_flag;
 }
 
-esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
+esp_err_t max9867_init(audio_hal_codec_config_t *cfg)
 {
-    ESP_LOGI(TAG, "new_codec init");
+    ESP_LOGI(TAG, "max9867 init");
     int res = 0;
     i2c_config_t max_i2c_cfg = {
         .mode = I2C_MODE_MASTER,
@@ -191,27 +191,27 @@ esp_err_t new_codec_init(audio_hal_codec_config_t *cfg)
     return ESP_OK;
 }
 
-esp_err_t new_codec_deinit(void)
+esp_err_t max9867_deinit(void)
 {
     return ESP_OK;
 }
 
-esp_err_t new_codec_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctrl_state)
+esp_err_t max9867_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctrl_state)
 {
     return ESP_OK;
 }
 
-esp_err_t new_codec_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_iface_t *iface)
+esp_err_t max9867_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_iface_t *iface)
 {
     return ESP_OK;
 }
 
-esp_err_t new_codec_set_voice_mute(bool mute)
+esp_err_t max9867_set_voice_mute(bool mute)
 {
     return ESP_OK;
 }
 
-esp_err_t new_codec_set_voice_volume(int volume)
+esp_err_t max9867_set_voice_volume(int volume)
 {
     uint8_t regbuf, txbuf[64];
     s_volume = (volume / 2);
@@ -222,7 +222,7 @@ esp_err_t new_codec_set_voice_volume(int volume)
     return ESP_OK;
 }
 
-esp_err_t new_codec_get_voice_volume(int *volume)
+esp_err_t max9867_get_voice_volume(int *volume)
 {
     *volume = (s_volume * 2);
     return ESP_OK;

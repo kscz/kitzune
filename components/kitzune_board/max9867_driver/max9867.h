@@ -22,8 +22,8 @@
  *
  */
 
-#ifndef __NEW_CODEC_H__
-#define __NEW_CODEC_H__
+#ifndef __MAX9867_H__
+#define __MAX9867_H__
 
 #include "audio_hal.h"
 
@@ -32,34 +32,34 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize new_codec chip
+ * @brief Initialize max9867 chip
  *
- * @param cfg configuration of new_codec
- *
- * @return
- *     - ESP_OK
- *     - ESP_FAIL
- */
-esp_err_t new_codec_init(audio_hal_codec_config_t *cfg);
-
-/**
- * @brief Deinitialize new_codec chip
+ * @param cfg configuration of max9867
  *
  * @return
  *     - ESP_OK
  *     - ESP_FAIL
  */
-esp_err_t new_codec_deinit(void);
+esp_err_t max9867_init(audio_hal_codec_config_t *cfg);
 
 /**
- * The functions new_codec_ctrl_state and new_codec_config_i2s are not used by this driver.
+ * @brief Deinitialize max9867 chip
+ *
+ * @return
+ *     - ESP_OK
+ *     - ESP_FAIL
+ */
+esp_err_t max9867_deinit(void);
+
+/**
+ * The functions max9867_ctrl_state and new_codec_config_i2s are not used by this driver.
  * They are kept here to maintain the uniformity and convenience of the interface
  * of the ADF project.
- * These settings for new_codec are burned in firmware and configuration files.
+ * These settings for max9867 are burned in firmware and configuration files.
  * Default i2s configuration: 48000Hz, 16bit, Left-Right channels.
  * Use resampling to be compatible with different file types.
  *
- * @brief Control new_codec chip
+ * @brief Control max9867 chip
  *
  * @param mode codec mode
  * @param ctrl_state start or stop decode or encode progress
@@ -68,10 +68,10 @@ esp_err_t new_codec_deinit(void);
  *     - ESP_FAIL Parameter error
  *     - ESP_OK   Success
  */
-esp_err_t new_codec_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctrl_state);
+esp_err_t max9867_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctrl_state);
 
 /**
- * @brief Configure new_codec codec mode and I2S interface
+ * @brief Configure max9867 codec mode and I2S interface
  *
  * @param mode codec mode
  * @param iface I2S config
@@ -80,7 +80,7 @@ esp_err_t new_codec_ctrl_state(audio_hal_codec_mode_t mode, audio_hal_ctrl_t ctr
  *     - ESP_FAIL Parameter error
  *     - ESP_OK   Success
  */
-esp_err_t new_codec_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_iface_t *iface);
+esp_err_t max9867_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_iface_t *iface);
 
 /**
  * @brief mute or unmute the codec
@@ -91,7 +91,7 @@ esp_err_t new_codec_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_
  *     - ESP_OK
  *     - ESP_FAIL
  */
-esp_err_t new_codec_set_voice_mute(bool mute);
+esp_err_t max9867_set_voice_mute(bool mute);
 
 /**
  * @brief  Set voice volume
@@ -102,7 +102,7 @@ esp_err_t new_codec_set_voice_mute(bool mute);
  *     - ESP_OK
  *     - ESP_FAIL
  */
-esp_err_t new_codec_set_voice_volume(int volume);
+esp_err_t max9867_set_voice_volume(int volume);
 
 /**
  * @brief Get voice volume
@@ -113,7 +113,7 @@ esp_err_t new_codec_set_voice_volume(int volume);
  *     - ESP_OK
  *     - ESP_FAIL
  */
-esp_err_t new_codec_get_voice_volume(int *volume);
+esp_err_t max9867_get_voice_volume(int *volume);
 
 #ifdef __cplusplus
 }

@@ -4,11 +4,11 @@ set(COMPONENT_PRIV_REQUIRES audio_sal audio_hal esp_dispatcher esp_peripherals d
 
 if(CONFIG_AUDIO_BOARD_CUSTOM)
 message(STATUS "Current board name is " CONFIG_AUDIO_BOARD_CUSTOM)
-list(APPEND COMPONENT_ADD_INCLUDEDIRS ./my_board_v1_0 ./my_codec_driver)
+list(APPEND COMPONENT_ADD_INCLUDEDIRS ./kitzune_v1_0 ./max9867_driver)
 set(COMPONENT_SRCS
-./my_board_v1_0/board.c
-./my_board_v1_0/board_pins_config.c
-./my_codec_driver/new_codec.c
+./kitzune_v1_0/board.c
+./kitzune_v1_0/board_pins_config.c
+./max9867_driver/max9867.c
 )
 endif()
 
