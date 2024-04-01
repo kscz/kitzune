@@ -139,8 +139,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK( ret );
 
-    esp_log_level_set(TAG, ESP_LOG_INFO);
-
     /* This GPIO controls the SDMMC pullups - pull them up! */
     gpio_reset_pin(26);
     gpio_set_direction(26, GPIO_MODE_OUTPUT);
@@ -153,6 +151,8 @@ void app_main(void)
     ESP_LOGI(TAG, "[1.1] Initialize and start peripherals");
     audio_board_key_init(set);
     audio_board_sdcard_init(set, SD_MODE_4_LINE);
+
+    bt_be_init();
 
     // launch player_backend task!
     xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 1, NULL, APP_CPU_NUM);
@@ -169,9 +169,6 @@ void app_main(void)
     periph_service_handle_t input_ser = input_key_service_create(&input_cfg);
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);
     periph_service_set_callback(input_ser, input_key_service_cb, (void *)board_handle);
-
-    bt_be_init();
-    vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "[3.7] Create bt peripheral");
     esp_periph_handle_t bt_periph = bt_create_periph();
