@@ -223,6 +223,9 @@ esp_err_t bt_be_start_discovery(bt_be_disc_cb_t disc_comp_cb) {
     s_state = APP_GAP_STATE_DEVICE_DISCOVERING;
     esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 10, 0);
 
+    /* set discoverable and connectable mode, wait to be connected */
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+
     return ESP_OK;
 }
 
@@ -233,9 +236,6 @@ static void bt_be_gap_start_up(void)
 
     char *dev_name = "KITZUNE";
     esp_bt_dev_set_device_name(dev_name);
-
-    /* set discoverable and connectable mode, wait to be connected */
-    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
 }
 
 void bt_be_init(void)
@@ -273,8 +273,8 @@ void bt_be_init(void)
      * Set default parameters for Legacy Pairing
      * Use variable pin, input pin code when pairing
      */
-    esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
-    esp_bt_pin_code_t pin_code;
+    esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
+    esp_bt_pin_code_t pin_code = {'0', '0', '0', '0'};
     esp_bt_gap_set_pin(pin_type, 0, pin_code);
 
     bt_be_gap_start_up();
