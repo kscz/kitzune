@@ -30,11 +30,6 @@ static size_t s_dev_count = 0;
 static app_gap_state_t s_state;
 static bt_be_disc_cb_t s_disc_complete_cb = NULL;
 
-
-esp_err_t bt_be_connect_ad2p(esp_bd_addr_t bda) {
-    return esp_a2d_source_connect(bda);
-}
-
 static char *bda2str(esp_bd_addr_t bda, char *str, size_t size)
 {
     if (bda == NULL || str == NULL || size < 18) {
@@ -45,6 +40,12 @@ static char *bda2str(esp_bd_addr_t bda, char *str, size_t size)
     sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
             p[0], p[1], p[2], p[3], p[4], p[5]);
     return str;
+}
+
+esp_err_t bt_be_connect_ad2p(esp_bd_addr_t bda) {
+    char bda_str[18];
+    ESP_LOGI(TAG, "Connecting: %s", bda2str(bda, bda_str, 18));
+    return esp_a2d_source_connect(bda);
 }
 
 static bool get_name_from_eir(uint8_t *eir, uint8_t *bdname, uint8_t *bdname_len)
