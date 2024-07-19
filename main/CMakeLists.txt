@@ -2,6 +2,7 @@ set(COMPONENT_SRCS
     "main.c"
     "ui_common.c"
     "ui_bt.c"
+    "ui_fe.c"
     "ui_mm.c"
     "ui_np.c"
     "bt_be.c"
