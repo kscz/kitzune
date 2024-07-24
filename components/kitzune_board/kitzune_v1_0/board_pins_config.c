@@ -30,7 +30,7 @@
 #include "audio_mem.h"
 #include "soc/soc_caps.h"
 
-static const char *TAG = "MY_BOARD_V1_0";
+static const char *TAG = "KITZUNE_BOARD_V1_0";
 
 esp_err_t get_i2c_pins(i2c_port_t port, i2c_config_t *i2c_config)
 {

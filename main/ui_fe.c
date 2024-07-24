@@ -19,7 +19,12 @@ typedef struct {
     lv_obj_t * list_handle;
 } ui_fe_item_t;
 
-// Local handles for all of the UI elements
+// FIXME Make sure we confirm that the 255 byte limit for FAT32 filenames is accurate
+typedef struct {
+    char path[256];
+} ui_fe_path_t;
+
+// Local handles
 static lv_obj_t * s_screen = NULL;
 static lv_obj_t * s_top_bar = NULL;
 static lv_obj_t * s_fe_menu = NULL;
@@ -27,8 +32,15 @@ static ui_fe_item_t *s_fe_list = NULL;
 static size_t s_fe_list_size = 0;
 static size_t s_fe_list_count = 0;
 
-static size_t s_hl_line = 0;
+// FIXME Allow for a deeper nesting than 4 directories
+static ui_fe_path_t s_cur_path[4];
+static size_t s_cur_path_len = 0;
 
+static size_t s_hl_line = 0;
+static lv_coord_t s_hor_res, s_ver_res;
+
+// De-highlight the currently highlighted line and disable circular scroll
+// Then highlight the new line and enable circular scroll
 static void set_highlighted_line(size_t line) {
     // Clear the old highlight
     lv_obj_set_style_text_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -41,11 +53,30 @@ static void set_highlighted_line(size_t line) {
     lv_obj_set_style_text_color(s_fe_list[s_hl_line].list_handle, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(s_fe_list[s_hl_line].list_handle, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-
     lv_label_set_long_mode(s_fe_list[s_hl_line].list_handle, LV_LABEL_LONG_SCROLL_CIRCULAR);
 }
 
-void add_dir_ent(const struct dirent *ent) {
+// Check to see if the current line is within the viewport and scroll it if not
+static void scroll_line_to_view(size_t line) {
+    // Get the target line's position and height
+    lv_coord_t line_y = lv_obj_get_y(s_fe_list[line].list_handle);
+    lv_coord_t line_h = lv_obj_get_height(s_fe_list[line].list_handle);
+
+    // Get the viewport's scroll position and size
+    lv_coord_t scroll_y = lv_obj_get_scroll_y(s_fe_menu);
+    lv_coord_t scroll_h = lv_obj_get_height(s_fe_menu);
+
+    // See if the line is wholly in view
+    if (line_y + line_h > scroll_y + scroll_h) {
+        lv_obj_scroll_to_y(s_fe_menu, line_y + line_h - scroll_h, LV_ANIM_ON);
+    } else if(line_y < scroll_y) {
+        lv_obj_scroll_to_y(s_fe_menu, line_y, LV_ANIM_ON);
+    }
+}
+
+// Add the entry to the directory list, growing the allocation if needed
+static void add_dir_ent(const char *name) {
+    // Check if we need more space
     if (s_fe_list_size == s_fe_list_count) {
         size_t new_size = s_fe_list_size * 2;
         new_size = new_size == 0 ? 4 : new_size;
@@ -58,20 +89,25 @@ void add_dir_ent(const struct dirent *ent) {
         s_fe_list = new_fe_list;
     }
 
+    // Add in the new entry to the directory listing
     size_t cur = s_fe_list_count;
     s_fe_list_count++;
-    s_fe_list[cur].list_handle = lv_list_add_text(s_fe_menu, ent->d_name);
+    s_fe_list[cur].list_handle = lv_list_add_text(s_fe_menu, name);
     lv_label_set_long_mode(s_fe_list[cur].list_handle, LV_LABEL_LONG_CLIP);
 }
 
-void create_dir_list(const char *dir) {
+// Iterate through the directory and create a list of all the files
+static void create_dir_list(const char *dir) {
     DIR *dp;
     struct dirent *ep;
+    if (s_cur_path_len != 0) {
+        add_dir_ent("..");
+    }
+
     dp = opendir(dir);
     if (dp != NULL) {
         while ((ep = readdir (dp)) != NULL) {
-            printf("%s\n", ep->d_name);
-            add_dir_ent(ep);
+            add_dir_ent(ep->d_name);
         }
 
         closedir(dp);
@@ -80,21 +116,33 @@ void create_dir_list(const char *dir) {
     }
 }
 
+// Delete all the children of the current list
+static void clear_dir_list() {
+    lv_obj_clean(s_fe_menu);
+    s_fe_list_count = 0;
+    s_hl_line = 0;
+}
+
+// Create the initial screen with the SD card root directory listing
 esp_err_t ui_fe_init(void) {
     lv_disp_t *disp = ui_get_display();
     if (disp == NULL) {
         return ESP_FAIL;
     }
+    s_hor_res = disp->driver->hor_res;
+    s_ver_res = disp->driver->ver_res;
     s_screen = lv_obj_create(NULL);
 
     // Create a status bar
     s_top_bar = ui_create_top_bar(s_screen);
 
-    // Create a song-title section
+    // Create a file explorer section
     s_fe_menu = lv_list_create(s_screen);
-    lv_obj_set_width(s_fe_menu, disp->driver->hor_res);
+    lv_obj_set_width(s_fe_menu, s_hor_res);
+    lv_obj_set_height(s_fe_menu, s_ver_res - 12);
     lv_obj_align(s_fe_menu, LV_ALIGN_TOP_MID, 0, 12);
     create_dir_list("/sdcard");
+    set_highlighted_line(0);
 
     return ESP_OK;
 }
@@ -103,30 +151,50 @@ lv_obj_t *ui_fe_get_screen(void) {
     return s_screen;
 }
 
+// Process input from the front keys
 disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle) {
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_UP: {
                 if (s_hl_line > 0) {
+                    // Initiate a scroll by 1 pixel to force a redraw
+                    lv_obj_scroll_by(s_fe_menu, 0, 1, LV_ANIM_ON);
                     set_highlighted_line(s_hl_line - 1);
-                    lv_coord_t y = lv_obj_get_height(s_fe_list[s_hl_line].list_handle);
-                    lv_obj_scroll_by(s_fe_menu, 0, y, LV_ANIM_ON);
-                    //lv_coord_t y = lv_obj_get_y(s_fe_list[s_hl_line].list_handle);
-                    //lv_obj_scroll_to_y(s_fe_menu, y, LV_ANIM_ON);
+                    scroll_line_to_view(s_hl_line);
                 }
                 break;
             }
             case INPUT_KEY_USER_ID_DOWN: {
                 if (s_hl_line < s_fe_list_count - 1) {
+                    // Initiate a scroll by 1 pixel to force a redraw
+                    lv_obj_scroll_by(s_fe_menu, 0, -1, LV_ANIM_ON);
                     set_highlighted_line(s_hl_line + 1);
-                    lv_coord_t y = lv_obj_get_height(s_fe_list[s_hl_line].list_handle);
-                    lv_obj_scroll_by(s_fe_menu, 0, -y, LV_ANIM_ON);
-                    //lv_coord_t y = lv_obj_get_y(s_fe_list[s_hl_line].list_handle);
-                    //lv_obj_scroll_to_y(s_fe_menu, y, LV_ANIM_ON);
-                    break;
+                    scroll_line_to_view(s_hl_line);
                 }
+                break;
             }
-            case INPUT_KEY_USER_ID_CENTER:
+            case INPUT_KEY_USER_ID_CENTER: {
+                if (s_cur_path_len != 0 && s_hl_line == 0) {
+                    s_cur_path_len--;
+                } else {
+                    strcpy(s_cur_path[s_cur_path_len].path, lv_label_get_text(s_fe_list[s_hl_line].list_handle));
+                    s_cur_path_len++;
+                }
+                clear_dir_list();
+
+                // FIXME Actually check the path lengths
+                char fullpath[1024];
+                char *cur_p = stpcpy(fullpath, "/sdcard");
+                for (int i = 0; i < s_cur_path_len; ++i) {
+                    *cur_p = '/';
+                    cur_p++;
+                    cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                }
+                ESP_LOGE(TAG, "%s", fullpath);
+                create_dir_list(fullpath);
+                set_highlighted_line(0);
+                break;
+            }
             case INPUT_KEY_USER_ID_LEFT:
             case INPUT_KEY_USER_ID_RIGHT:
             default:
