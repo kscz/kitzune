@@ -10,6 +10,7 @@
 #include "board.h"
 
 #include "lvgl.h"
+#include "esp_lvgl_port.h"
 #include "ui_common.h"
 #include "ui_fe.h"
 
@@ -42,6 +43,7 @@ static lv_coord_t s_hor_res, s_ver_res;
 // De-highlight the currently highlighted line and disable circular scroll
 // Then highlight the new line and enable circular scroll
 static void set_highlighted_line(size_t line) {
+    lvgl_port_lock(0);
     // Clear the old highlight
     lv_obj_set_style_text_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(s_fe_list[s_hl_line].list_handle, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -54,10 +56,12 @@ static void set_highlighted_line(size_t line) {
     lv_obj_set_style_bg_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(s_fe_list[s_hl_line].list_handle, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_long_mode(s_fe_list[s_hl_line].list_handle, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lvgl_port_unlock();
 }
 
 // Check to see if the current line is within the viewport and scroll it if not
 static void scroll_line_to_view(size_t line) {
+    lvgl_port_lock(0);
     // Get the target line's position and height
     lv_coord_t line_y = lv_obj_get_y(s_fe_list[line].list_handle);
     lv_coord_t line_h = lv_obj_get_height(s_fe_list[line].list_handle);
@@ -72,6 +76,7 @@ static void scroll_line_to_view(size_t line) {
     } else if(line_y < scroll_y) {
         lv_obj_scroll_to_y(s_fe_menu, line_y, LV_ANIM_ON);
     }
+    lvgl_port_unlock();
 }
 
 // Add the entry to the directory list, growing the allocation if needed
@@ -92,8 +97,10 @@ static void add_dir_ent(const char *name) {
     // Add in the new entry to the directory listing
     size_t cur = s_fe_list_count;
     s_fe_list_count++;
+    lvgl_port_lock(0);
     s_fe_list[cur].list_handle = lv_list_add_text(s_fe_menu, name);
     lv_label_set_long_mode(s_fe_list[cur].list_handle, LV_LABEL_LONG_CLIP);
+    lvgl_port_unlock();
 }
 
 // Iterate through the directory and create a list of all the files
@@ -118,7 +125,9 @@ static void create_dir_list(const char *dir) {
 
 // Delete all the children of the current list
 static void clear_dir_list() {
+    lvgl_port_lock(0);
     lv_obj_clean(s_fe_menu);
+    lvgl_port_unlock();
     s_fe_list_count = 0;
     s_hl_line = 0;
 }
@@ -137,10 +146,12 @@ esp_err_t ui_fe_init(void) {
     s_top_bar = ui_create_top_bar(s_screen);
 
     // Create a file explorer section
+    lvgl_port_lock(0);
     s_fe_menu = lv_list_create(s_screen);
     lv_obj_set_width(s_fe_menu, s_hor_res);
     lv_obj_set_height(s_fe_menu, s_ver_res - 12);
     lv_obj_align(s_fe_menu, LV_ALIGN_TOP_MID, 0, 12);
+    lvgl_port_unlock();
     create_dir_list("/sdcard");
     set_highlighted_line(0);
 
@@ -157,8 +168,6 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_UP: {
                 if (s_hl_line > 0) {
-                    // Initiate a scroll by 1 pixel to force a redraw
-                    lv_obj_scroll_by(s_fe_menu, 0, 1, LV_ANIM_ON);
                     set_highlighted_line(s_hl_line - 1);
                     scroll_line_to_view(s_hl_line);
                 }
@@ -166,8 +175,6 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
             }
             case INPUT_KEY_USER_ID_DOWN: {
                 if (s_hl_line < s_fe_list_count - 1) {
-                    // Initiate a scroll by 1 pixel to force a redraw
-                    lv_obj_scroll_by(s_fe_menu, 0, -1, LV_ANIM_ON);
                     set_highlighted_line(s_hl_line + 1);
                     scroll_line_to_view(s_hl_line);
                 }
@@ -190,7 +197,6 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     cur_p++;
                     cur_p = stpcpy(cur_p, s_cur_path[i].path);
                 }
-                ESP_LOGE(TAG, "%s", fullpath);
                 create_dir_list(fullpath);
                 set_highlighted_line(0);
                 break;
