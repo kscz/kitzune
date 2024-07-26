@@ -108,8 +108,10 @@ static void create_dir_list(const char *dir) {
     DIR *dp;
     struct dirent *ep;
     if (s_cur_path_len != 0) {
-        add_dir_ent("..");
+        add_dir_ent(LV_SYMBOL_UP " Prev Directory");
     }
+
+    add_dir_ent(" " LV_SYMBOL_PLAY " Play All");
 
     dp = opendir(dir);
     if (dp != NULL) {

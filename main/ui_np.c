@@ -1,4 +1,5 @@
 #include "lvgl.h"
+#include "esp_lvgl_port.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -33,17 +34,21 @@ esp_err_t ui_np_init(void) {
     if (disp == NULL) {
         return ESP_FAIL;
     }
+    lvgl_port_lock(0);
     s_screen = lv_obj_create(NULL);
+    lvgl_port_unlock();
 
     // Create a status bar
     s_top_bar = ui_create_top_bar(s_screen);
 
     // Create a song-title section
+    lvgl_port_lock(0);
     s_title_bar = lv_label_create(s_screen);
     lv_label_set_text(s_title_bar, "Play a song! Like maybe... ring ring ring ring ring ring ring banana phoooooone!");
     lv_label_set_long_mode(s_title_bar, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
     lv_obj_set_width(s_title_bar, disp->driver->hor_res);
     lv_obj_align(s_title_bar, LV_ALIGN_TOP_MID, 0, 12);
+    lvgl_port_unlock();
 
     return ESP_OK;
 }

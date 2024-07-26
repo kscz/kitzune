@@ -5,6 +5,7 @@
 #include "board.h"
 
 #include "lvgl.h"
+#include "esp_lvgl_port.h"
 #include "ui_common.h"
 
 // Local handles for all of the UI elements
@@ -30,6 +31,7 @@ lv_obj_t *ui_mm_get_screen(void) {
 }
 
 static void ui_mm_sel_pos(uint8_t pos) {
+    lvgl_port_lock(0);
     lv_label_set_text_sel_start(s_menu_bar, LV_LABEL_TEXT_SELECTION_OFF);
     lv_label_set_text_sel_end(s_menu_bar, LV_LABEL_TEXT_SELECTION_OFF);
 
@@ -37,6 +39,7 @@ static void ui_mm_sel_pos(uint8_t pos) {
         lv_label_set_text_sel_start(s_menu_bar, s_sel_pos[pos][0]);
         lv_label_set_text_sel_end(s_menu_bar, s_sel_pos[pos][1]);
     }
+    lvgl_port_unlock();
 }
 
 esp_err_t ui_mm_init(void) {
@@ -49,6 +52,7 @@ esp_err_t ui_mm_init(void) {
     // Create a status bar
     s_top_bar = ui_create_top_bar(s_mm_screen);
 
+    lvgl_port_lock(0);
     s_menu_bar = lv_label_create(s_mm_screen);
     lv_label_set_text(s_menu_bar, LV_SYMBOL_HOME " " LV_SYMBOL_LIST "  " LV_SYMBOL_DIRECTORY "  " LV_SYMBOL_CALL "\n" LV_SYMBOL_EDIT " " LV_SYMBOL_DOWNLOAD "   " LV_SYMBOL_BLUETOOTH "  " LV_SYMBOL_SETTINGS);
     ui_add_style_big(s_menu_bar);
@@ -58,6 +62,7 @@ esp_err_t ui_mm_init(void) {
     lv_obj_set_style_bg_opa(s_menu_bar, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(s_menu_bar, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_menu_bar, LV_ALIGN_TOP_MID, 0, 14);
+    lvgl_port_unlock();
 
     ui_mm_sel_pos(s_cur_pos);
 

@@ -107,6 +107,7 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         s_prev_disp_state = s_cur_disp_state;
         s_cur_disp_state = next_state;
 
+        lvgl_port_lock(0);
         switch(s_cur_disp_state) {
             case DS_NOW_PLAYING:
                 lv_scr_load_anim(ui_np_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
@@ -122,6 +123,7 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
                 lv_scr_load_anim(ui_mm_get_screen(), LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, false);
                 break;
         }
+        lvgl_port_unlock();
     }
 
     return ESP_OK;
@@ -235,10 +237,12 @@ void app_main(void)
             .mirror_y = false,
         }
     };
+    lvgl_port_lock(0);
     lv_disp_t * disp = lvgl_port_add_disp(&disp_cfg);
 
     /* Rotation of the screen */
     lv_disp_set_rotation(disp, LV_DISP_ROT_NONE);
+    lvgl_port_unlock();
 
     ui_common_init(disp);
     ui_mm_init();
