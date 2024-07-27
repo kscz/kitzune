@@ -18,6 +18,8 @@
 
 typedef struct {
     lv_obj_t * list_handle;
+    char *name;
+    bool is_dir;
 } ui_fe_item_t;
 
 // FIXME Make sure we confirm that the 255 byte limit for FAT32 filenames is accurate
@@ -80,7 +82,7 @@ static void scroll_line_to_view(size_t line) {
 }
 
 // Add the entry to the directory list, growing the allocation if needed
-static void add_dir_ent(const char *name) {
+static void add_dir_ent(const char *name, bool is_dir) {
     // Check if we need more space
     if (s_fe_list_size == s_fe_list_count) {
         size_t new_size = s_fe_list_size * 2;
@@ -97,10 +99,21 @@ static void add_dir_ent(const char *name) {
     // Add in the new entry to the directory listing
     size_t cur = s_fe_list_count;
     s_fe_list_count++;
+    char show_name[264];
+    snprintf(show_name, sizeof(show_name), "%s %s", (is_dir ? LV_SYMBOL_DIRECTORY : ""), name);
     lvgl_port_lock(0);
-    s_fe_list[cur].list_handle = lv_list_add_text(s_fe_menu, name);
+    s_fe_list[cur].list_handle = lv_list_add_text(s_fe_menu, show_name);
     lv_label_set_long_mode(s_fe_list[cur].list_handle, LV_LABEL_LONG_CLIP);
     lvgl_port_unlock();
+    s_fe_list[cur].is_dir = is_dir;
+
+    size_t name_len = strlen(name);
+    s_fe_list[cur].name = malloc(name_len + 1);
+    if (s_fe_list[cur].name == NULL) {
+        ESP_LOGE(TAG, "Unable to allocate directory entry space!");
+        while(1) {}
+    }
+    strcpy(s_fe_list[cur].name, name);
 }
 
 // Iterate through the directory and create a list of all the files
@@ -108,15 +121,15 @@ static void create_dir_list(const char *dir) {
     DIR *dp;
     struct dirent *ep;
     if (s_cur_path_len != 0) {
-        add_dir_ent(LV_SYMBOL_UP " Prev Directory");
+        add_dir_ent(LV_SYMBOL_UP " Up Directory", false);
     }
 
-    add_dir_ent(" " LV_SYMBOL_PLAY " Play All");
+    add_dir_ent(" " LV_SYMBOL_PLAY " Play All", false);
 
     dp = opendir(dir);
     if (dp != NULL) {
         while ((ep = readdir (dp)) != NULL) {
-            add_dir_ent(ep->d_name);
+            add_dir_ent(ep->d_name, (ep->d_type == DT_DIR));
         }
 
         closedir(dp);
@@ -130,6 +143,10 @@ static void clear_dir_list() {
     lvgl_port_lock(0);
     lv_obj_clean(s_fe_menu);
     lvgl_port_unlock();
+    for (size_t i = 0; i < s_fe_list_count; ++i) {
+        free(s_fe_list[i].name);
+        s_fe_list[i].name = NULL;
+    }
     s_fe_list_count = 0;
     s_hl_line = 0;
 }
@@ -171,36 +188,46 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
             case INPUT_KEY_USER_ID_UP: {
                 if (s_hl_line > 0) {
                     set_highlighted_line(s_hl_line - 1);
-                    scroll_line_to_view(s_hl_line);
+                } else {
+                    set_highlighted_line(s_fe_list_count - 1);
                 }
+                scroll_line_to_view(s_hl_line);
                 break;
             }
             case INPUT_KEY_USER_ID_DOWN: {
                 if (s_hl_line < s_fe_list_count - 1) {
                     set_highlighted_line(s_hl_line + 1);
-                    scroll_line_to_view(s_hl_line);
+                } else {
+                    set_highlighted_line(0);
                 }
+                scroll_line_to_view(s_hl_line);
                 break;
             }
             case INPUT_KEY_USER_ID_CENTER: {
+                bool should_update = false;
                 if (s_cur_path_len != 0 && s_hl_line == 0) {
                     s_cur_path_len--;
-                } else {
-                    strcpy(s_cur_path[s_cur_path_len].path, lv_label_get_text(s_fe_list[s_hl_line].list_handle));
+                    should_update = true;
+                } else if(s_fe_list[s_hl_line].is_dir) {
+                    strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
                     s_cur_path_len++;
+                    should_update = true;
                 }
-                clear_dir_list();
 
-                // FIXME Actually check the path lengths
-                char fullpath[1024];
-                char *cur_p = stpcpy(fullpath, "/sdcard");
-                for (int i = 0; i < s_cur_path_len; ++i) {
-                    *cur_p = '/';
-                    cur_p++;
-                    cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                if (should_update) {
+                    clear_dir_list();
+
+                    // FIXME Actually check the path lengths
+                    char fullpath[1024];
+                    char *cur_p = stpcpy(fullpath, "/sdcard");
+                    for (int i = 0; i < s_cur_path_len; ++i) {
+                        *cur_p = '/';
+                        cur_p++;
+                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                    }
+                    create_dir_list(fullpath);
+                    set_highlighted_line(0);
                 }
-                create_dir_list(fullpath);
-                set_highlighted_line(0);
                 break;
             }
             case INPUT_KEY_USER_ID_LEFT:
