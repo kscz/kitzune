@@ -1,5 +1,6 @@
 set(COMPONENT_SRCS
     "main.c"
+    "kz_util.c"
     "ui_common.c"
     "ui_bt.c"
     "ui_fe.c"

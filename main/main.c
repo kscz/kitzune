@@ -15,19 +15,8 @@
 #include "esp_random.h"
 #include "nvs_flash.h"
 
-#include "audio_element.h"
-#include "audio_pipeline.h"
-#include "audio_event_iface.h"
-#include "audio_common.h"
-#include "fatfs_stream.h"
-#include "i2s_stream.h"
-#include "flac_decoder.h"
-#include "mp3_decoder.h"
-#include "filter_resample.h"
-
 #include "esp_peripherals.h"
 #include "periph_sdcard.h"
-#include "periph_touch.h"
 #include "periph_button.h"
 #include "input_key_service.h"
 #include "periph_adc_button.h"
@@ -176,9 +165,12 @@ void app_main(void)
     audio_board_handle_t board_handle = audio_board_init();
     audio_hal_ctrl_codec(board_handle->audio_hal, AUDIO_HAL_CODEC_MODE_DECODE, AUDIO_HAL_CTRL_START);
 
+    audio_hal_set_volume(board_handle->audio_hal, 50);
+
     ESP_LOGI(TAG, "[ 3 ] Create and start input key service");
     input_key_service_info_t input_key_info[] = INPUT_KEY_DEFAULT_INFO();
     input_key_service_cfg_t input_cfg = INPUT_KEY_SERVICE_DEFAULT_CONFIG();
+    input_cfg.based_cfg.task_stack = (4 * 1024); // We need a bit more stack for the file explorer
     input_cfg.handle = set;
     periph_service_handle_t input_ser = input_key_service_create(&input_cfg);
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);

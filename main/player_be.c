@@ -30,24 +30,12 @@
 #include "sdcard_list.h"
 #include "board.h"
 
+#include "kz_util.h"
 #include "lvgl.h"
 #include "ui_common.h"
 #include "ui_np.h"
 
 #define PLAYER_DECODE_IN_PSRAM (true)
-
-typedef enum {
-    AUD_EXT_UNKNOWN = 0,
-    AUD_EXT_MP3,
-    AUD_EXT_FLAC,
-    AUD_EXT_OPUS,
-    AUD_EXT_OGG,
-    AUD_EXT_WAV,
-    AUD_EXT_MP4,
-    AUD_EXT_AAC,
-    AUD_EXT_M4A,
-    AUD_EXT_TS,
-} audio_extension_e;
 
 typedef enum {
     PLAYER_BE_PLAYLIST_MSG,
@@ -85,42 +73,6 @@ static bool s_playmode_is_shuffle = true;
 static audio_event_iface_handle_t s_evt;
 
 static TaskHandle_t s_task = NULL;
-
-static audio_extension_e player_get_ext(const char *url) {
-    // Search for the extension part of the URL
-    const char *ext_ptr = &(url[strlen(url) - 1]);
-    while (url != ext_ptr && '.' != *ext_ptr) {
-        ext_ptr--;
-    }
-
-    // If the url does not contain a period (or the first char is a period) abort!
-    if (url == ext_ptr) {
-        return AUD_EXT_UNKNOWN;
-    }
-
-    // Do a case-insensitive compare against our known extensions
-    if (strcasecmp(".mp3", ext_ptr) == 0) {
-        return AUD_EXT_MP3;
-    } else if (strcasecmp(".mp4", ext_ptr) == 0) {
-        return AUD_EXT_MP4;
-    } else if (strcasecmp(".flac", ext_ptr) == 0) {
-        return AUD_EXT_FLAC;
-    } else if (strcasecmp(".opus", ext_ptr) == 0) {
-        return AUD_EXT_OPUS;
-    } else if (strcasecmp(".ogg", ext_ptr) == 0 || strcasecmp(".oga", ext_ptr) == 0) {
-        return AUD_EXT_OGG;
-    } else if (strcasecmp(".wav", ext_ptr) == 0) {
-        return AUD_EXT_WAV;
-    } else if (strcasecmp(".aac", ext_ptr) == 0) {
-        return AUD_EXT_AAC;
-    } else if (strcasecmp(".m4a", ext_ptr) == 0) {
-        return AUD_EXT_M4A;
-    } else if (strcasecmp(".ts", ext_ptr) == 0) {
-        return AUD_EXT_TS;
-    }
-
-    return AUD_EXT_UNKNOWN;
-}
 
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait) {
     player_be_msg_u m;
@@ -223,7 +175,7 @@ static void configure_and_run_playlist(const char *url) {
     audio_pipeline_stop(s_pipeline);
     audio_pipeline_wait_for_stop(s_pipeline);
 
-    audio_extension_e ext = player_get_ext(url);
+    audio_extension_e ext = kz_get_ext(url);
     audio_element_set_uri(s_fs_stream, url);
     audio_pipeline_reset_ringbuffer(s_pipeline);
     audio_pipeline_reset_elements(s_pipeline);
@@ -317,7 +269,7 @@ void player_main(void) {
     aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_aac_stream  = aac_decoder_init(&aac_cfg);
 
-    set_decoder_info(player_get_ext(url));
+    set_decoder_info(kz_get_ext(url));
 
     // at this point we should have everything we need to start playing!
     // build up the pipeline!

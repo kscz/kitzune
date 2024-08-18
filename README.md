@@ -5,7 +5,7 @@ Hopefully, it even works!
 Dependencies:
 * the latest version of the esp-idf v5.1.x series - tested with https://github.com/espressif/esp-idf/releases/tag/v5.1.4
   * Checkout using the steps in the release document - `git clone -b v5.1.4 --recursive https://github.com/espressif/esp-idf.git esp-idf-v5.1.4`
-  * Install this as per the instructions here - https://docs.espressif.com/projects/esp-idf/en/v5.1.3/get-started/index.html - but in my case this simply involved entering the esp-idf-v5.1.4 directory and running `./install.sh all`
+  * Install this as per the instructions here - https://docs.espressif.com/projects/esp-idf/en/v5.1.4/get-started/index.html - but in my case this simply involved entering the esp-idf-v5.1.4 directory and running `./install.sh all`
 * the esp-adf, v2.6 - https://github.com/espressif/esp-adf/releases/tag/v2.6
   * Checkout using this command - `git clone -b v2.6 --recursive https://github.com/espressif/esp-adf.git esp-adf-v2.6`
   * Do not use/install the esp-idf-v4.4 submodule included with the ADF

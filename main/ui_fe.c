@@ -14,6 +14,7 @@
 
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
+#include "kz_util.h"
 #include "player_be.h"
 #include "ui_common.h"
 #include "ui_fe.h"
@@ -187,7 +188,9 @@ lv_obj_t *ui_fe_get_screen(void) {
 
 // Process input from the front keys
 disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle) {
+    disp_state_t ret = DS_NO_CHANGE;
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
+        bool should_update = false;
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_UP: {
                 if (s_hl_line > 0) {
@@ -208,7 +211,6 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                 break;
             }
             case INPUT_KEY_USER_ID_CENTER: {
-                bool should_update = false;
                 if (s_cur_path_len != 0 && s_hl_line == 0) {
                     s_cur_path_len--;
                     should_update = true;
@@ -216,6 +218,43 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
                     s_cur_path_len++;
                     should_update = true;
+                } else if ((s_cur_path_len == 0 && s_hl_line == 0) ||
+                        (s_cur_path_len != 0 && s_hl_line == 1))
+                {
+                    // We should fall here if they hit the "play all" button
+                    playlist_operator_handle_t pl;
+                    if (ESP_OK != dram_list_create(&pl)) {
+                        ESP_LOGW(TAG, "Error creating playlist!");
+                        break;
+                    }
+                    // FIXME Actually check the path lengths
+                    char basepath[1024];
+                    char *cur_p = stpcpy(basepath, "file://sdcard");
+                    for (size_t i = 0; i < s_cur_path_len; ++i) {
+                        *cur_p = '/';
+                        cur_p++;
+                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                    }
+                    for (size_t i = s_hl_line + 1; i < s_fe_list_count; ++i) {
+                        // TODO go into directories
+                        if (s_fe_list[i].is_dir) {
+                            continue;
+                        }
+                        char fullpath[1024];
+                        cur_p = stpcpy(fullpath, basepath);
+                        *cur_p = '/';
+                        cur_p++;
+                        cur_p = stpcpy(cur_p, s_fe_list[i].name);
+                        if (AUD_EXT_UNKNOWN != kz_get_ext(fullpath)) {
+                            ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
+                            dram_list_save(pl, fullpath);
+                        } else {
+                            ESP_LOGI(TAG, "Not adding to playlist - \"%s\"", fullpath);
+                        }
+                    }
+
+                    player_set_playlist(pl, portMAX_DELAY);
+                    ret = DS_NOW_PLAYING;
                 } else if (!s_fe_list[s_hl_line].is_dir) {
                     playlist_operator_handle_t pl;
                     if (ESP_OK != dram_list_create(&pl)) {
@@ -225,7 +264,7 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     // FIXME Actually check the path lengths
                     char fullpath[1024];
                     char *cur_p = stpcpy(fullpath, "file://sdcard");
-                    for (int i = 0; i < s_cur_path_len; ++i) {
+                    for (size_t i = 0; i < s_cur_path_len; ++i) {
                         *cur_p = '/';
                         cur_p++;
                         cur_p = stpcpy(cur_p, s_cur_path[i].path);
@@ -233,34 +272,49 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     *cur_p = '/';
                     cur_p++;
                     cur_p = stpcpy(cur_p, s_fe_list[s_hl_line].name);
-                    ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
-                    dram_list_save(pl, fullpath);
-
-                    player_set_playlist(pl, portMAX_DELAY);
-                }
-
-                if (should_update) {
-                    clear_dir_list();
-
-                    // FIXME Actually check the path lengths
-                    char fullpath[1024];
-                    char *cur_p = stpcpy(fullpath, "/sdcard");
-                    for (int i = 0; i < s_cur_path_len; ++i) {
-                        *cur_p = '/';
-                        cur_p++;
-                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                    if (AUD_EXT_UNKNOWN != kz_get_ext(fullpath)) {
+                        ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
+                        dram_list_save(pl, fullpath);
+                        player_set_playlist(pl, portMAX_DELAY);
+                        ret = DS_NOW_PLAYING;
+                    } else {
+                        dram_list_destroy(pl);
                     }
-                    create_dir_list(fullpath);
-                    set_highlighted_line(0);
                 }
                 break;
             }
             case INPUT_KEY_USER_ID_LEFT:
+                if (s_cur_path_len != 0) {
+                    s_cur_path_len--;
+                    should_update = true;
+                }
+                break;
             case INPUT_KEY_USER_ID_RIGHT:
+                if(s_fe_list[s_hl_line].is_dir) {
+                    strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
+                    s_cur_path_len++;
+                    should_update = true;
+                }
+                break;
             default:
                 break;
         }
+
+        if (should_update) {
+            clear_dir_list();
+
+            // FIXME Actually check the path lengths
+            char fullpath[1024];
+            char *cur_p = stpcpy(fullpath, "/sdcard");
+            for (int i = 0; i < s_cur_path_len; ++i) {
+                *cur_p = '/';
+                cur_p++;
+                cur_p = stpcpy(cur_p, s_cur_path[i].path);
+            }
+            create_dir_list(fullpath);
+            set_highlighted_line(0);
+        }
     }
 
-    return DS_NO_CHANGE;
+    return ret;
 }
