@@ -248,6 +248,7 @@ void player_main(void) {
     audio_element_set_uri(s_fs_stream, url);
 
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+    mp3_cfg.out_rb_size = (16 * 1024);
     mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_mp3_stream = mp3_decoder_init(&mp3_cfg);
 
