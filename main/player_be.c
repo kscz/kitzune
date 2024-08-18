@@ -164,9 +164,12 @@ esp_err_t player_next(void) {
     return ESP_OK;
 }
 
-esp_err_t player_set_shuffle(bool is_shuffle) {
+void player_set_shuffle(bool is_shuffle) {
     s_playmode_is_shuffle = is_shuffle;
-    return ESP_OK;
+}
+
+bool player_get_shuffle(void) {
+    return s_playmode_is_shuffle;
 }
 
 static void configure_and_run_playlist(const char *url) {

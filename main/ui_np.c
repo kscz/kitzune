@@ -86,6 +86,16 @@ disp_state_t ui_np_handle_input(periph_service_handle_t handle, periph_service_e
         }
     }
 
+    if (evt->type == INPUT_KEY_SERVICE_ACTION_PRESS) {
+        switch ((int)evt->data) {
+            case INPUT_KEY_USER_ID_RIGHT:
+                player_set_shuffle(!player_get_shuffle());
+                break;
+            default:
+                break;
+        }
+    }
+
     return ESP_OK;
 }
 
