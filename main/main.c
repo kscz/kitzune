@@ -193,7 +193,7 @@ void app_main(void)
     ESP_LOGI(TAG, "[1.2] Set up a sdcard playlist and scan sdcard music save to it");
     playlist_operator_handle_t sdcard_list_handle = NULL;
     sdcard_list_create(&sdcard_list_handle);
-    sdcard_scan(sdcard_url_save_cb, "/sdcard/", 4, (const char *[]) {"flac"}, 1, sdcard_list_handle);
+    sdcard_scan(sdcard_url_save_cb, "/sdcard/", 4, (const char *[]) {"flac", "mp3", "wav", "ogg", "oga", "m4a", "aac", "ts"}, 8, sdcard_list_handle);
     player_set_playlist(sdcard_list_handle, portMAX_DELAY);
 
     ESP_LOGI(TAG, "Install panel IO");

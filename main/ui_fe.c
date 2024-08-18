@@ -9,8 +9,12 @@
 #include "input_key_service.h"
 #include "board.h"
 
+#include "playlist.h"
+#include "dram_list.h"
+
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
+#include "player_be.h"
 #include "ui_common.h"
 #include "ui_fe.h"
 
@@ -212,6 +216,27 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
                     s_cur_path_len++;
                     should_update = true;
+                } else if (!s_fe_list[s_hl_line].is_dir) {
+                    playlist_operator_handle_t pl;
+                    if (ESP_OK != dram_list_create(&pl)) {
+                        ESP_LOGW(TAG, "Error creating playlist!");
+                        break;
+                    }
+                    // FIXME Actually check the path lengths
+                    char fullpath[1024];
+                    char *cur_p = stpcpy(fullpath, "file://sdcard");
+                    for (int i = 0; i < s_cur_path_len; ++i) {
+                        *cur_p = '/';
+                        cur_p++;
+                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                    }
+                    *cur_p = '/';
+                    cur_p++;
+                    cur_p = stpcpy(cur_p, s_fe_list[s_hl_line].name);
+                    ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
+                    dram_list_save(pl, fullpath);
+
+                    player_set_playlist(pl, portMAX_DELAY);
                 }
 
                 if (should_update) {

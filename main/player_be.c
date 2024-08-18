@@ -49,9 +49,25 @@ typedef enum {
     AUD_EXT_TS,
 } audio_extension_e;
 
+typedef enum {
+    PLAYER_BE_PLAYLIST_MSG,
+    PLAYER_BE_PLAYPAUSE_MSG,
+    PLAYER_BE_NEXT_MSG,
+} player_be_msg_type;
+
+typedef struct {
+    player_be_msg_type type; // always PLAYER_BE_PLAYLIST_MSG
+    playlist_operator_t *pl_op;
+} playlist_msg;
+
+typedef union {
+    player_be_msg_type type;
+    playlist_msg pl_msg;
+} player_be_msg_u;
+
 static const char *TAG = "PLAYER_BE";
 
-// internal queue used to manage new playlists
+// queue used to manage passing messages from other threads to the player
 static QueueHandle_t s_player_be_queue = NULL;
 
 static playlist_operator_handle_t s_playlist = NULL;
@@ -59,9 +75,16 @@ static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL
 static uint32_t s_playlist_len = 0;
 
 static audio_pipeline_handle_t s_pipeline = NULL;
-static audio_element_handle_t s_hp_stream, s_decode_stream, s_fs_stream;
-static audio_extension_e s_current_decoder = AUD_EXT_UNKNOWN;
+static audio_element_handle_t s_hp_stream, s_fs_stream;
+static audio_element_handle_t s_mp3_stream, s_flac_stream, s_aac_stream,
+                              s_wav_stream, s_ogg_stream, s_opus_stream;
+static audio_element_handle_t s_current_decoder = NULL;
+static const char *s_current_ext_str = NULL;
+static audio_extension_e s_current_ext = AUD_EXT_UNKNOWN;
 static bool s_playmode_is_shuffle = true;
+static audio_event_iface_handle_t s_evt;
+
+static TaskHandle_t s_task = NULL;
 
 static audio_extension_e player_get_ext(const char *url) {
     // Search for the extension part of the URL
@@ -100,10 +123,23 @@ static audio_extension_e player_get_ext(const char *url) {
 }
 
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait) {
-    return xQueueSendToBack(s_player_be_queue, &new_playlist, ticksToWait);
+    player_be_msg_u m;
+    m.pl_msg.type = PLAYER_BE_PLAYLIST_MSG;
+    m.pl_msg.pl_op = new_playlist;
+    xQueueSendToBack(s_player_be_queue, &m, ticksToWait);
+    xTaskAbortDelay(s_task);
+    return 0;
 }
 
 esp_err_t player_playpause(void) {
+    player_be_msg_u msg;
+    msg.type = PLAYER_BE_PLAYPAUSE_MSG;
+    xQueueSendToBack(s_player_be_queue, &msg, 0);
+    xTaskAbortDelay(s_task);
+    return ESP_OK;
+}
+
+static esp_err_t playpause_playlist(void) {
     audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
     switch (el_state) {
         case AEL_STATE_INIT :
@@ -126,75 +162,53 @@ esp_err_t player_playpause(void) {
     return ESP_OK;
 }
 
-static void set_decoder(audio_extension_e ext) {
+static void set_decoder_info(audio_extension_e ext) {
     switch (ext) {
         case AUD_EXT_MP3:
-            mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-            mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream = mp3_decoder_init(&mp3_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_mp3_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "mp3";
             break;
         case AUD_EXT_FLAC:
-            flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
-            flac_cfg.out_rb_size = (16 * 1024);
-            flac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = flac_decoder_init(&flac_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_flac_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "flac";
             break;
         case AUD_EXT_OPUS:
-            opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
-            opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = decoder_opus_init(&opus_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_opus_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "opus";
             break;
         case AUD_EXT_OGG:
-            ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
-            ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = ogg_decoder_init(&ogg_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_ogg_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "ogg";
             break;
         case AUD_EXT_WAV:
-            wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
-            wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = wav_decoder_init(&wav_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_wav_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "wav";
             break;
         case AUD_EXT_MP4:
         case AUD_EXT_AAC:
         case AUD_EXT_M4A:
         case AUD_EXT_TS:
-            aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
-            aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
-            s_decode_stream  = aac_decoder_init(&aac_cfg);
-            s_current_decoder = ext;
+            s_current_decoder = s_aac_stream;
+            s_current_ext = ext;
+            s_current_ext_str = "aac";
             break;
         default:
-            s_decode_stream = NULL;
-            s_current_decoder = AUD_EXT_UNKNOWN;
+            s_current_decoder = NULL;
+            s_current_ext = AUD_EXT_UNKNOWN;
+            s_current_ext_str = NULL;
     }
 }
 
 esp_err_t player_next(void) {
-    if (s_playlist == NULL) {
-        return ESP_FAIL;
-    }
-    char *url = NULL;
-    audio_pipeline_stop(s_pipeline);
-    audio_pipeline_wait_for_stop(s_pipeline);
-    audio_pipeline_terminate(s_pipeline);
-    if (s_playmode_is_shuffle) {
-        uint32_t next_song = esp_random() % s_playlist_len;
-        s_pl_oper.choose(s_playlist, next_song, &url);
-    } else {
-        s_pl_oper.current(s_playlist, &url);
-    }
-    ESP_LOGI(TAG, "URL: %s", url);
-    ui_np_set_song_title(url);
-    audio_element_set_uri(s_fs_stream, url);
-    audio_pipeline_reset_ringbuffer(s_pipeline);
-    audio_pipeline_reset_elements(s_pipeline);
-    audio_pipeline_run(s_pipeline);
-
+    player_be_msg_u msg;
+    msg.type = PLAYER_BE_NEXT_MSG;
+    xQueueSendToBack(s_player_be_queue, &msg, 0);
+    xTaskAbortDelay(s_task);
     return ESP_OK;
 }
 
@@ -203,8 +217,41 @@ esp_err_t player_set_shuffle(bool is_shuffle) {
     return ESP_OK;
 }
 
+static void configure_and_run_playlist(const char *url) {
+    ESP_LOGI(TAG, "URL: %s", url);
+    ui_np_set_song_title(url);
+    audio_pipeline_stop(s_pipeline);
+    audio_pipeline_wait_for_stop(s_pipeline);
+
+    audio_extension_e ext = player_get_ext(url);
+    audio_element_set_uri(s_fs_stream, url);
+    audio_pipeline_reset_ringbuffer(s_pipeline);
+    audio_pipeline_reset_elements(s_pipeline);
+    audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
+
+    if (s_current_ext != ext) {
+        audio_pipeline_breakup_elements(s_pipeline, s_current_decoder);
+        set_decoder_info(ext);
+        audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
+        audio_pipeline_set_listener(s_pipeline, s_evt);
+    }
+    audio_pipeline_run(s_pipeline);
+}
+
+static void advance_playlist() {
+    char *url = NULL;
+    if (s_playmode_is_shuffle) {
+        uint32_t next_song = esp_random() % s_playlist_len;
+        s_pl_oper.choose(s_playlist, next_song, &url);
+    } else {
+        s_pl_oper.next(s_playlist, 1, &url);
+    }
+    configure_and_run_playlist(url);
+}
+
 void player_main(void) {
-    s_player_be_queue = xQueueCreate(1, sizeof(playlist_operator_t));
+    s_player_be_queue = xQueueCreate(4, sizeof(player_be_msg_u));
+    s_task = xTaskGetHandle("PLAYER");
 
     // create an empty pipeline
     audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
@@ -213,7 +260,7 @@ void player_main(void) {
 
     // Initialize the I2S stream
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
-    i2s_cfg.i2s_config.sample_rate = 48000;
+    i2s_cfg.i2s_config.sample_rate = 48000; // Just set it to an easy default
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     s_hp_stream = i2s_stream_init(&i2s_cfg);
 
@@ -223,8 +270,12 @@ void player_main(void) {
     s_fs_stream = fatfs_stream_init(&fatfs_cfg);
 
     // Loop until we get a valid playlist
+    player_be_msg_u be_msg;
     while (s_playlist == NULL) {
-        xQueueReceive(s_player_be_queue, &s_playlist, portMAX_DELAY);
+        xQueueReceive(s_player_be_queue, &be_msg, portMAX_DELAY);
+        if (be_msg.type == PLAYER_BE_PLAYLIST_MSG) {
+            s_playlist = be_msg.pl_msg.pl_op;
+        }
     }
     // Now that we have a valid playlist, setup our associated data
     s_playlist->get_operation(&s_pl_oper);
@@ -241,34 +292,83 @@ void player_main(void) {
     ui_np_set_song_title(url);
     audio_element_set_uri(s_fs_stream, url);
 
-    audio_extension_e ext = player_get_ext(url);
-    set_decoder(ext);
+    mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+    mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_mp3_stream = mp3_decoder_init(&mp3_cfg);
+
+    flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
+    flac_cfg.out_rb_size = (16 * 1024);
+    flac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_flac_stream  = flac_decoder_init(&flac_cfg);
+
+    opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
+    opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_opus_stream  = decoder_opus_init(&opus_cfg);
+
+    ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
+    ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_ogg_stream  = ogg_decoder_init(&ogg_cfg);
+
+    wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
+    wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_wav_stream  = wav_decoder_init(&wav_cfg);
+
+    aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
+    aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
+    s_aac_stream  = aac_decoder_init(&aac_cfg);
+
+    set_decoder_info(player_get_ext(url));
 
     // at this point we should have everything we need to start playing!
     // build up the pipeline!
     audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
-    audio_pipeline_register(s_pipeline, s_decode_stream, "dec");
+    audio_pipeline_register(s_pipeline, s_mp3_stream, "mp3");
+    audio_pipeline_register(s_pipeline, s_flac_stream, "flac");
+    audio_pipeline_register(s_pipeline, s_opus_stream, "opus");
+    audio_pipeline_register(s_pipeline, s_ogg_stream, "ogg");
+    audio_pipeline_register(s_pipeline, s_wav_stream, "wav");
+    audio_pipeline_register(s_pipeline, s_aac_stream, "aac");
     audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
 
-    const char *link_tag[3] = {"fs", "dec", "hp"};
+    const char *link_tag[3] = {"fs", s_current_ext_str, "hp"};
     audio_pipeline_link(s_pipeline, &link_tag[0], 3);
 
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
-    audio_event_iface_handle_t evt = audio_event_iface_init(&evt_cfg);
+    s_evt = audio_event_iface_init(&evt_cfg);
 
-    audio_pipeline_set_listener(s_pipeline, evt);
+    audio_pipeline_set_listener(s_pipeline, s_evt);
 
     while (1) {
         audio_event_iface_msg_t msg;
-        if (ESP_OK != audio_event_iface_listen(evt, &msg, portMAX_DELAY)) {
+        while (pdPASS == xQueueReceive(s_player_be_queue, &be_msg, 0)) {
+            if (be_msg.type == PLAYER_BE_NEXT_MSG) {
+                advance_playlist();
+            } else if (be_msg.type == PLAYER_BE_PLAYPAUSE_MSG) {
+                playpause_playlist();
+            } else if (be_msg.type == PLAYER_BE_PLAYLIST_MSG) {
+                ESP_LOGI(TAG, "Received a playlist!");
+                s_playlist = be_msg.pl_msg.pl_op;
+                // setup our associated data
+                s_playlist->get_operation(&s_pl_oper);
+                s_playlist_len = (uint32_t)s_pl_oper.get_url_num(s_playlist);
+                if (s_playmode_is_shuffle) {
+                    uint32_t next_song = esp_random() % s_playlist_len;
+                    s_pl_oper.choose(s_playlist, next_song, &url);
+                } else {
+                    s_pl_oper.current(s_playlist, &url);
+                }
+                configure_and_run_playlist(url);
+            }
+        }
+        if (ESP_OK != audio_event_iface_listen(s_evt, &msg, portMAX_DELAY)) {
             continue;
         }
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
             // Set music info for a new song to be played
-            if (msg.source == (void *) s_decode_stream
+            if (msg.source == (void *) s_current_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
                 audio_element_info_t music_info = {0};
-                audio_element_getinfo(s_decode_stream, &music_info);
+                audio_element_getinfo(s_current_decoder, &music_info);
                 ESP_LOGI(TAG, "[ * ] Received music info from decoder, sample_rates=%d, bits=%d, ch=%d, dur=%d",
                          music_info.sample_rates, music_info.bits, music_info.channels, music_info.duration);
                 i2s_stream_set_clk(s_hp_stream, music_info.sample_rates, music_info.bits, music_info.channels);
@@ -281,53 +381,7 @@ void player_main(void) {
                 audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
-                    if (s_playmode_is_shuffle) {
-                        uint32_t next_song = esp_random() % s_playlist_len;
-                        s_pl_oper.choose(s_playlist, next_song, &url);
-                    } else {
-                        s_pl_oper.next(s_playlist, 1, &url);
-                    }
-                    ESP_LOGI(TAG, "URL: %s", url);
-                    ui_np_set_song_title(url);
-
-                    ext = player_get_ext(url);
-                    if (s_current_decoder == ext) {
-                        audio_element_set_uri(s_fs_stream, url);
-                        audio_pipeline_reset_ringbuffer(s_pipeline);
-                        audio_pipeline_reset_elements(s_pipeline);
-                        audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
-                        audio_pipeline_run(s_pipeline);
-                    } else {
-                        ESP_LOGI(TAG, "[ * ] Terminating and rebuilding pipeline...");
-
-                        // The stop should be unnecessary, but we do it for completeness
-                        audio_pipeline_stop(s_pipeline);
-                        audio_pipeline_wait_for_stop(s_pipeline);
-
-                        // Terminate
-                        audio_pipeline_terminate(s_pipeline);
-
-                        // Remove the listeners before we unregister
-                        audio_pipeline_remove_listener(s_pipeline);
-
-                        audio_pipeline_unregister(s_pipeline, s_hp_stream);
-                        audio_pipeline_unregister(s_pipeline, s_decode_stream);
-                        audio_pipeline_unregister(s_pipeline, s_fs_stream);
-
-                        audio_element_deinit(s_decode_stream);
-                        set_decoder(ext);
-
-                        audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
-                        audio_pipeline_register(s_pipeline, s_decode_stream, "dec");
-                        audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
-
-                        audio_pipeline_link(s_pipeline, &link_tag[0], 3);
-
-                        audio_element_set_uri(s_fs_stream, url);
-                        audio_pipeline_set_listener(s_pipeline, evt);
-
-                        audio_pipeline_run(s_pipeline);
-                    }
+                    advance_playlist();
                 }
             }
         }
