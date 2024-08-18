@@ -302,6 +302,7 @@ void player_main(void) {
                 playpause_playlist();
             } else if (be_msg.type == PLAYER_BE_PLAYLIST_MSG) {
                 ESP_LOGI(TAG, "Received a playlist!");
+                s_pl_oper.destroy(s_playlist);
                 s_playlist = be_msg.pl_msg.pl_op;
                 // setup our associated data
                 s_playlist->get_operation(&s_pl_oper);
