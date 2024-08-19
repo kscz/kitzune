@@ -185,7 +185,7 @@ static void configure_and_run_playlist(const char *url) {
     audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
 
     if (s_current_ext != ext) {
-        audio_pipeline_breakup_elements(s_pipeline, s_current_decoder);
+        audio_pipeline_unlink(s_pipeline);
         set_decoder_info(ext);
         audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
         audio_pipeline_set_listener(s_pipeline, s_evt);
