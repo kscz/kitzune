@@ -186,6 +186,7 @@ static void configure_and_run_playlist(const char *url) {
 
     if (s_current_ext != ext) {
         audio_pipeline_unlink(s_pipeline);
+        audio_element_terminate(s_current_decoder);
         set_decoder_info(ext);
         audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
         audio_pipeline_set_listener(s_pipeline, s_evt);
@@ -258,10 +259,12 @@ void player_main(void) {
     s_flac_stream  = flac_decoder_init(&flac_cfg);
 
     opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
+    opus_cfg.out_rb_size = (16 * 1024);
     opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_opus_stream  = decoder_opus_init(&opus_cfg);
 
     ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
+    ogg_cfg.out_rb_size = (16 * 1024);
     ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_ogg_stream  = ogg_decoder_init(&ogg_cfg);
 
@@ -317,7 +320,7 @@ void player_main(void) {
                 configure_and_run_playlist(url);
             }
         }
-        if (ESP_OK != audio_event_iface_listen(s_evt, &msg, portMAX_DELAY)) {
+        if (ESP_OK != audio_event_iface_listen(s_evt, &msg, pdMS_TO_TICKS(1000))) {
             continue;
         }
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
