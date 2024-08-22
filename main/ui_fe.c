@@ -287,8 +287,15 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
 
                     r_generate_playlist(pl, basepath, cur_p);
 
-                    player_set_playlist(pl, portMAX_DELAY);
-                    ret = DS_NOW_PLAYING;
+                    playlist_operation_t pl_op;
+                    pl->get_operation(&pl_op);
+
+                    if (pl_op.get_url_num(pl) != 0) {
+                        player_set_playlist(pl, portMAX_DELAY);
+                        ret = DS_NOW_PLAYING;
+                    } else {
+                        pl_op.destroy(pl);
+                    }
                 } else if (!s_fe_list[s_hl_line].is_dir) {
                     playlist_operator_handle_t pl;
                     if (ESP_OK != dram_list_create(&pl)) {

@@ -174,7 +174,7 @@ bool player_get_shuffle(void) {
 
 static void configure_and_run_playlist(const char *url) {
     ESP_LOGI(TAG, "URL: %s", url);
-    ui_np_set_song_title(url);
+    ui_np_set_song_title(url + 14);
     audio_pipeline_stop(s_pipeline);
     audio_pipeline_wait_for_stop(s_pipeline);
 
@@ -245,7 +245,7 @@ void player_main(void) {
     } else {
         s_pl_oper.current(s_playlist, &url);
     }
-    ui_np_set_song_title(url);
+    ui_np_set_song_title(url + 14);
     audio_element_set_uri(s_fs_stream, url);
 
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
@@ -269,10 +269,12 @@ void player_main(void) {
     s_ogg_stream  = ogg_decoder_init(&ogg_cfg);
 
     wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
+    wav_cfg.out_rb_size = (16 * 1024);
     wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_wav_stream  = wav_decoder_init(&wav_cfg);
 
     aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
+    aac_cfg.out_rb_size = (16 * 1024);
     aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_aac_stream  = aac_decoder_init(&aac_cfg);
 

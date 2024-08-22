@@ -16,13 +16,16 @@
 // Local handles for all of the UI elements
 static lv_obj_t * s_screen = NULL;
 static lv_obj_t * s_title_bar = NULL;
+static lv_obj_t * s_shuffle_bar = NULL;
 static lv_obj_t * s_top_bar = NULL;
 
 void ui_np_set_song_title(const char *title) {
     if (s_title_bar == NULL)
         return;
 
+    lvgl_port_lock(0);
     lv_label_set_text(s_title_bar, title);
+    lvgl_port_unlock();
 }
 
 lv_obj_t *ui_np_get_screen(void) {
@@ -48,6 +51,10 @@ esp_err_t ui_np_init(void) {
     lv_label_set_long_mode(s_title_bar, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
     lv_obj_set_width(s_title_bar, disp->driver->hor_res);
     lv_obj_align(s_title_bar, LV_ALIGN_TOP_MID, 0, 12);
+    s_shuffle_bar = lv_label_create(s_screen);
+    lv_obj_set_width(s_shuffle_bar, disp->driver->hor_res);
+    lv_label_set_text(s_shuffle_bar, LV_SYMBOL_SHUFFLE);
+    lv_obj_align(s_shuffle_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
     lvgl_port_unlock();
 
     return ESP_OK;
@@ -90,6 +97,13 @@ disp_state_t ui_np_handle_input(periph_service_handle_t handle, periph_service_e
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_RIGHT:
                 player_set_shuffle(!player_get_shuffle());
+                lvgl_port_lock(0);
+                if (player_get_shuffle()) {
+                    lv_label_set_text(s_shuffle_bar, LV_SYMBOL_SHUFFLE);
+                } else {
+                    lv_label_set_text(s_shuffle_bar, "");
+                }
+                lvgl_port_unlock();
                 break;
             default:
                 break;
