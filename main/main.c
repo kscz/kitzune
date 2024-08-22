@@ -163,7 +163,7 @@ void app_main(void)
     ESP_LOGI(TAG, "[ 3 ] Create and start input key service");
     input_key_service_info_t input_key_info[] = INPUT_KEY_DEFAULT_INFO();
     input_key_service_cfg_t input_cfg = INPUT_KEY_SERVICE_DEFAULT_CONFIG();
-    input_cfg.based_cfg.task_stack = (8 * 1024); // We need a bit more stack for the file explorer
+    input_cfg.based_cfg.task_stack = (6 * 1024); // We need a bit more stack for the file explorer
     input_cfg.handle = set;
     periph_service_handle_t input_ser = input_key_service_create(&input_cfg);
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);

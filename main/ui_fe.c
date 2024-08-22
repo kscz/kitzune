@@ -208,26 +208,22 @@ lv_obj_t *ui_fe_get_screen(void) {
 }
 
 // Create a playlist by recursively calling this function to descend into directories
-// The parameters here are a bit henious - there's the playlist we're adding to, and then
-// a pointer to a string which represents the current base url, and a pointer to the '\0'
-// at the end of that base url. That string must also be a large buffer, because we copy
-// past the null terminator and don't check our lengths
-//
-// FIXME - actually bounds check our copying here
-static void r_generate_playlist(playlist_operator_handle_t pl, char *curpath, char *curpath_end) {
+// This function is kind of a mess of pointers right now - allocation is challenging
+static void r_generate_playlist(playlist_operator_handle_t pl, char **curpath, size_t curpath_end, size_t *curpath_size) {
     DIR *dp;
     struct dirent *ep;
 
     // FIXME - we use this to skip past the "file:/" in front of the path, but it's gross
-    dp = opendir(curpath + 6);
+    dp = opendir(*curpath + 6);
     if (dp == NULL) {
         perror ("Couldn't open the directory");
         return;
     }
 
+    // Iterate through the current directory and add all the files, saving
+    // directories for later
     char **dirs = malloc(sizeof(char *) * 4);
     size_t dirs_count = 0, dirs_size = 4;
-
     while ((ep = readdir (dp)) != NULL) {
         if (ep->d_type == DT_DIR) {
             if (dirs_count == dirs_size) {
@@ -238,27 +234,47 @@ static void r_generate_playlist(playlist_operator_handle_t pl, char *curpath, ch
             strcpy(dirs[dirs_count], ep->d_name);
             dirs_count++;
         } else {
-            char *new_end = curpath_end;
-            *new_end = '/';
-            new_end++;
-            new_end = stpcpy(new_end, ep->d_name);
-            if (AUD_EXT_UNKNOWN != kz_get_ext(curpath)) {
-                dram_list_save(pl, curpath);
+            size_t name_len = strlen(ep->d_name);
+            while (*curpath_size < curpath_end + name_len + 2) {
+                *curpath_size = *curpath_size * 2;
+                *curpath = realloc(*curpath, sizeof(**curpath) * *curpath_size);
+                if (*curpath == NULL) {
+                    ESP_LOGE(TAG, "Failed to allocate!");
+                    while(1) {}
+                }
+            }
+            (*curpath)[curpath_end] = '/';
+            strcpy(&((*curpath)[curpath_end + 1]), ep->d_name);
+            if (AUD_EXT_UNKNOWN != kz_get_ext(*curpath)) {
+                dram_list_save(pl, *curpath);
             }
         }
     }
 
+    // Close our file handle before descending further
     closedir(dp);
 
+    // Handle recursing into all the subdirectories we saved aside for later
     for (size_t i = 0; i < dirs_count; ++i) {
-        char *new_end = curpath_end;
-        *new_end = '/';
-        new_end++;
-        new_end = stpcpy(new_end, dirs[i]);
-        r_generate_playlist(pl, curpath, new_end);
+        size_t name_len = strlen(dirs[i]);
+        while (*curpath_size < curpath_end + name_len + 2) {
+            *curpath_size = *curpath_size * 2;
+            *curpath = realloc(*curpath, sizeof(**curpath) * *curpath_size);
+            if (*curpath == NULL) {
+                ESP_LOGE(TAG, "Failed to allocate!");
+                while(1) {}
+            }
+        }
+        (*curpath)[curpath_end] = '/';
+        strcpy(&((*curpath)[curpath_end + 1]), dirs[i]);
+        r_generate_playlist(pl, curpath, curpath_end + name_len + 1, curpath_size);
+
+        // Free the directory names as we go through
         free(dirs[i]);
         dirs[i] = NULL;
     }
+
+    // Free the directory array
     free(dirs);
     dirs = NULL;
 }
@@ -295,29 +311,60 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     push_cur_path(s_fe_list[s_hl_line].name);
                     should_update = true;
                 } else if (!s_fe_list[s_hl_line].is_dir) {
-                    // We should fall here if they hit the "play all" button
+                    // We should fall here if they hit the "play all" button or
+                    // if they select a file
                     playlist_operator_handle_t pl;
                     if (ESP_OK != dram_list_create(&pl)) {
                         ESP_LOGW(TAG, "Error creating playlist!");
                         break;
                     }
-                    // FIXME Actually check the path lengths
-                    char basepath[2048];
-                    char *cur_p = stpcpy(basepath, "file://sdcard");
+
+                    // Generate a base URL for the playlist
+                    size_t basepath_size = 256;
+                    char *basepath = malloc(sizeof(char) * basepath_size);
+                    if (basepath == NULL) {
+                        ESP_LOGE(TAG, "Failed to allocate!");
+                        while(1) {}
+                    }
+                    size_t cur_pos = 0;
+                    strcpy(basepath, "file://sdcard");
+                    cur_pos = strlen("file://sdcard");
+
+                    // Iterate through the current path segments and assemble the base URL
                     for (size_t i = 0; i < s_cur_path_len; ++i) {
-                        *cur_p = '/';
-                        cur_p++;
-                        cur_p = stpcpy(cur_p, s_cur_path[i]);
+                        size_t path_seg_len = strlen(s_cur_path[i]);
+                        while (basepath_size < cur_pos + path_seg_len + 2) {
+                            basepath_size = basepath_size * 2;
+                            basepath = realloc(basepath, sizeof(*basepath) * basepath_size);
+                            if (basepath == NULL) {
+                                ESP_LOGE(TAG, "Failed to allocate!!");
+                                while (1) {}
+                            }
+                        }
+                        basepath[cur_pos] = '/';
+                        cur_pos++;
+                        strcpy(&basepath[cur_pos], s_cur_path[i]);
+                        cur_pos += path_seg_len;
                     }
 
+                    // Check if this was the "play all" button or a single file
                     if ((s_cur_path_len == 0 && s_hl_line == 0) ||
                         (s_cur_path_len != 0 && s_hl_line == 1))
                     {
-                        r_generate_playlist(pl, basepath, cur_p);
+                        r_generate_playlist(pl, &basepath, cur_pos, &basepath_size);
                     } else {
-                        *cur_p = '/';
-                        cur_p++;
-                        cur_p = stpcpy(cur_p, s_fe_list[s_hl_line].name);
+                        size_t name_len = strlen(s_fe_list[s_hl_line].name);
+                        while (basepath_size < cur_pos + name_len + 2) {
+                            basepath_size = basepath_size * 2;
+                            basepath = realloc(basepath, sizeof(*basepath) * basepath_size);
+                            if (basepath == NULL) {
+                                ESP_LOGE(TAG, "Failed to allocate!!");
+                                while (1) {}
+                            }
+                        }
+                        basepath[cur_pos] = '/';
+                        cur_pos++;
+                        strcpy(&basepath[cur_pos], s_fe_list[s_hl_line].name);
                         dram_list_save(pl, basepath);
                     }
 
@@ -330,6 +377,9 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     } else {
                         pl_op.destroy(pl);
                     }
+
+                    free(basepath);
+                    basepath = NULL;
                 }
                 break;
             }
