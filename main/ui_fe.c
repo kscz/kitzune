@@ -27,11 +27,6 @@ typedef struct {
     bool is_dir;
 } ui_fe_item_t;
 
-// FIXME Make sure we confirm that the 255 byte limit for FAT32 filenames is accurate
-typedef struct {
-    char path[256];
-} ui_fe_path_t;
-
 // Local handles
 static lv_obj_t * s_screen = NULL;
 static lv_obj_t * s_top_bar = NULL;
@@ -40,9 +35,8 @@ static ui_fe_item_t *s_fe_list = NULL;
 static size_t s_fe_list_size = 0;
 static size_t s_fe_list_count = 0;
 
-// FIXME Allow for a deeper nesting than 8 directories
-static ui_fe_path_t s_cur_path[8];
-static size_t s_cur_path_len = 0;
+static char **s_cur_path = NULL;
+static size_t s_cur_path_len = 0, s_cur_path_size = 0;
 
 static size_t s_hl_line = 0;
 static lv_coord_t s_hor_res, s_ver_res;
@@ -156,6 +150,33 @@ static void clear_dir_list() {
     s_hl_line = 0;
 }
 
+// Add a path chunk to the current path array
+static void push_cur_path(const char *path_segment) {
+    if (s_cur_path_len == s_cur_path_size) {
+        s_cur_path_size = s_cur_path_size == 0 ? 2 : s_cur_path_size * 2;
+        s_cur_path = realloc(s_cur_path, sizeof(*s_cur_path) * s_cur_path_size);
+        if (s_cur_path == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate space!");
+            while(1) {}
+        }
+    }
+    const size_t path_segment_len = strlen(path_segment);
+    s_cur_path[s_cur_path_len] = malloc(path_segment_len + 1);
+    if (s_cur_path[s_cur_path_len] == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate space!");
+        while(1) {}
+    }
+    strcpy(s_cur_path[s_cur_path_len], path_segment);
+    s_cur_path_len++;
+}
+
+// Remove the last entry of the current path array
+static void pop_cur_path(void) {
+    s_cur_path_len--;
+    free(s_cur_path[s_cur_path_len]);
+    s_cur_path[s_cur_path_len] = NULL;
+}
+
 // Create the initial screen with the SD card root directory listing
 esp_err_t ui_fe_init(void) {
     lv_disp_t *disp = ui_get_display();
@@ -186,6 +207,13 @@ lv_obj_t *ui_fe_get_screen(void) {
     return s_screen;
 }
 
+// Create a playlist by recursively calling this function to descend into directories
+// The parameters here are a bit henious - there's the playlist we're adding to, and then
+// a pointer to a string which represents the current base url, and a pointer to the '\0'
+// at the end of that base url. That string must also be a large buffer, because we copy
+// past the null terminator and don't check our lengths
+//
+// FIXME - actually bounds check our copying here
 static void r_generate_playlist(playlist_operator_handle_t pl, char *curpath, char *curpath_end) {
     DIR *dp;
     struct dirent *ep;
@@ -261,15 +289,12 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
             }
             case INPUT_KEY_USER_ID_CENTER: {
                 if (s_cur_path_len != 0 && s_hl_line == 0) {
-                    s_cur_path_len--;
+                    pop_cur_path();
                     should_update = true;
                 } else if(s_fe_list[s_hl_line].is_dir) {
-                    strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
-                    s_cur_path_len++;
+                    push_cur_path(s_fe_list[s_hl_line].name);
                     should_update = true;
-                } else if ((s_cur_path_len == 0 && s_hl_line == 0) ||
-                        (s_cur_path_len != 0 && s_hl_line == 1))
-                {
+                } else if (!s_fe_list[s_hl_line].is_dir) {
                     // We should fall here if they hit the "play all" button
                     playlist_operator_handle_t pl;
                     if (ESP_OK != dram_list_create(&pl)) {
@@ -282,10 +307,19 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     for (size_t i = 0; i < s_cur_path_len; ++i) {
                         *cur_p = '/';
                         cur_p++;
-                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                        cur_p = stpcpy(cur_p, s_cur_path[i]);
                     }
 
-                    r_generate_playlist(pl, basepath, cur_p);
+                    if ((s_cur_path_len == 0 && s_hl_line == 0) ||
+                        (s_cur_path_len != 0 && s_hl_line == 1))
+                    {
+                        r_generate_playlist(pl, basepath, cur_p);
+                    } else {
+                        *cur_p = '/';
+                        cur_p++;
+                        cur_p = stpcpy(cur_p, s_fe_list[s_hl_line].name);
+                        dram_list_save(pl, basepath);
+                    }
 
                     playlist_operation_t pl_op;
                     pl->get_operation(&pl_op);
@@ -296,44 +330,18 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     } else {
                         pl_op.destroy(pl);
                     }
-                } else if (!s_fe_list[s_hl_line].is_dir) {
-                    playlist_operator_handle_t pl;
-                    if (ESP_OK != dram_list_create(&pl)) {
-                        ESP_LOGW(TAG, "Error creating playlist!");
-                        break;
-                    }
-                    // FIXME Actually check the path lengths
-                    char fullpath[1024];
-                    char *cur_p = stpcpy(fullpath, "file://sdcard");
-                    for (size_t i = 0; i < s_cur_path_len; ++i) {
-                        *cur_p = '/';
-                        cur_p++;
-                        cur_p = stpcpy(cur_p, s_cur_path[i].path);
-                    }
-                    *cur_p = '/';
-                    cur_p++;
-                    cur_p = stpcpy(cur_p, s_fe_list[s_hl_line].name);
-                    if (AUD_EXT_UNKNOWN != kz_get_ext(fullpath)) {
-                        ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
-                        dram_list_save(pl, fullpath);
-                        player_set_playlist(pl, portMAX_DELAY);
-                        ret = DS_NOW_PLAYING;
-                    } else {
-                        dram_list_destroy(pl);
-                    }
                 }
                 break;
             }
             case INPUT_KEY_USER_ID_LEFT:
                 if (s_cur_path_len != 0) {
-                    s_cur_path_len--;
+                    pop_cur_path();
                     should_update = true;
                 }
                 break;
             case INPUT_KEY_USER_ID_RIGHT:
                 if(s_fe_list[s_hl_line].is_dir) {
-                    strcpy(s_cur_path[s_cur_path_len].path, s_fe_list[s_hl_line].name);
-                    s_cur_path_len++;
+                    push_cur_path(s_fe_list[s_hl_line].name);
                     should_update = true;
                 }
                 break;
@@ -350,7 +358,7 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
             for (int i = 0; i < s_cur_path_len; ++i) {
                 *cur_p = '/';
                 cur_p++;
-                cur_p = stpcpy(cur_p, s_cur_path[i].path);
+                cur_p = stpcpy(cur_p, s_cur_path[i]);
             }
             create_dir_list(fullpath);
             set_highlighted_line(0);
