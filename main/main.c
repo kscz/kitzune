@@ -22,9 +22,7 @@
 #include "periph_adc_button.h"
 #include "board.h"
 #include "a2dp_stream.h"
-
-#include "sdcard_list.h"
-#include "sdcard_scan.h"
+#include "playlist.h"
 
 #include "driver/i2c.h"
 
@@ -122,15 +120,6 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
     return ESP_OK;
 }
 
-void sdcard_url_save_cb(void *user_data, char *url)
-{
-    playlist_operator_handle_t sdcard_handle = (playlist_operator_handle_t)user_data;
-    esp_err_t ret = sdcard_list_save(sdcard_handle, url);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Fail to save sdcard url to sdcard playlist");
-    }
-}
-
 void app_main(void)
 {
     /* Initialize NVS — it is used to store PHY calibration data and save key-value pairs in flash memory*/
@@ -174,7 +163,7 @@ void app_main(void)
     ESP_LOGI(TAG, "[ 3 ] Create and start input key service");
     input_key_service_info_t input_key_info[] = INPUT_KEY_DEFAULT_INFO();
     input_key_service_cfg_t input_cfg = INPUT_KEY_SERVICE_DEFAULT_CONFIG();
-    input_cfg.based_cfg.task_stack = (4 * 1024); // We need a bit more stack for the file explorer
+    input_cfg.based_cfg.task_stack = (8 * 1024); // We need a bit more stack for the file explorer
     input_cfg.handle = set;
     periph_service_handle_t input_ser = input_key_service_create(&input_cfg);
     input_key_service_add_key(input_ser, input_key_info, INPUT_KEY_NUM);
@@ -185,12 +174,6 @@ void app_main(void)
 
     ESP_LOGI(TAG, "[3.8] Start bt peripheral");
     esp_periph_start(set, bt_periph);
-
-    ESP_LOGI(TAG, "[1.2] Set up a sdcard playlist and scan sdcard music save to it");
-    playlist_operator_handle_t sdcard_list_handle = NULL;
-    sdcard_list_create(&sdcard_list_handle);
-    sdcard_scan(sdcard_url_save_cb, "/sdcard/", 4, (const char *[]) {"flac", "mp3", "wav", "ogg", "oga", "m4a", "aac", "ts"}, 8, sdcard_list_handle);
-    player_set_playlist(sdcard_list_handle, portMAX_DELAY);
 
     ESP_LOGI(TAG, "Install panel IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;

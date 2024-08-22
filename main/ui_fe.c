@@ -40,8 +40,8 @@ static ui_fe_item_t *s_fe_list = NULL;
 static size_t s_fe_list_size = 0;
 static size_t s_fe_list_count = 0;
 
-// FIXME Allow for a deeper nesting than 4 directories
-static ui_fe_path_t s_cur_path[4];
+// FIXME Allow for a deeper nesting than 8 directories
+static ui_fe_path_t s_cur_path[8];
 static size_t s_cur_path_len = 0;
 
 static size_t s_hl_line = 0;
@@ -186,6 +186,55 @@ lv_obj_t *ui_fe_get_screen(void) {
     return s_screen;
 }
 
+static void r_generate_playlist(playlist_operator_handle_t pl, char *curpath, char *curpath_end) {
+    DIR *dp;
+    struct dirent *ep;
+
+    // FIXME - we use this to skip past the "file:/" in front of the path, but it's gross
+    dp = opendir(curpath + 6);
+    if (dp == NULL) {
+        perror ("Couldn't open the directory");
+        return;
+    }
+
+    char **dirs = malloc(sizeof(char *) * 4);
+    size_t dirs_count = 0, dirs_size = 4;
+
+    while ((ep = readdir (dp)) != NULL) {
+        if (ep->d_type == DT_DIR) {
+            if (dirs_count == dirs_size) {
+                dirs_size = dirs_size * 2;
+                dirs = realloc(dirs, sizeof(*dirs) * dirs_size);
+            }
+            dirs[dirs_count] = malloc(strlen(ep->d_name) + 1);
+            strcpy(dirs[dirs_count], ep->d_name);
+            dirs_count++;
+        } else {
+            char *new_end = curpath_end;
+            *new_end = '/';
+            new_end++;
+            new_end = stpcpy(new_end, ep->d_name);
+            if (AUD_EXT_UNKNOWN != kz_get_ext(curpath)) {
+                dram_list_save(pl, curpath);
+            }
+        }
+    }
+
+    closedir(dp);
+
+    for (size_t i = 0; i < dirs_count; ++i) {
+        char *new_end = curpath_end;
+        *new_end = '/';
+        new_end++;
+        new_end = stpcpy(new_end, dirs[i]);
+        r_generate_playlist(pl, curpath, new_end);
+        free(dirs[i]);
+        dirs[i] = NULL;
+    }
+    free(dirs);
+    dirs = NULL;
+}
+
 // Process input from the front keys
 disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle) {
     disp_state_t ret = DS_NO_CHANGE;
@@ -228,30 +277,15 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                         break;
                     }
                     // FIXME Actually check the path lengths
-                    char basepath[1024];
+                    char basepath[2048];
                     char *cur_p = stpcpy(basepath, "file://sdcard");
                     for (size_t i = 0; i < s_cur_path_len; ++i) {
                         *cur_p = '/';
                         cur_p++;
                         cur_p = stpcpy(cur_p, s_cur_path[i].path);
                     }
-                    for (size_t i = s_hl_line + 1; i < s_fe_list_count; ++i) {
-                        // TODO go into directories
-                        if (s_fe_list[i].is_dir) {
-                            continue;
-                        }
-                        char fullpath[1024];
-                        cur_p = stpcpy(fullpath, basepath);
-                        *cur_p = '/';
-                        cur_p++;
-                        cur_p = stpcpy(cur_p, s_fe_list[i].name);
-                        if (AUD_EXT_UNKNOWN != kz_get_ext(fullpath)) {
-                            ESP_LOGI(TAG, "Adding to playlist - \"%s\"", fullpath);
-                            dram_list_save(pl, fullpath);
-                        } else {
-                            ESP_LOGI(TAG, "Not adding to playlist - \"%s\"", fullpath);
-                        }
-                    }
+
+                    r_generate_playlist(pl, basepath, cur_p);
 
                     player_set_playlist(pl, portMAX_DELAY);
                     ret = DS_NOW_PLAYING;
