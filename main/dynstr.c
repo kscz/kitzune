@@ -54,7 +54,7 @@ size_t dynstr_len(dynstr_handle_t dstr) {
     return dstr->len;
 }
 
-char *dynstr_as_c_str(dynstr_handle_t dstr) {
+const char *dynstr_as_c_str(dynstr_handle_t dstr) {
     return dstr->str;
 }
 

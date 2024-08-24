@@ -23,6 +23,8 @@
 
 #define TAG "UI_FE"
 
+#define FILE_PREFIX_LEN 6
+
 typedef struct {
     lv_obj_t * list_handle;
     char *name;
@@ -186,33 +188,41 @@ lv_obj_t *ui_fe_get_screen(void) {
 
 // Create a playlist for a directory
 static void generate_directory_playlist(playlist_operator_handle_t pl, dynstr_handle_t curpath) {
-    DIR *dp;
+    DIR *dp = NULL;
     struct dirent *ep;
 
     strstack_handle_t dirs = strstack_new();
-    strstack_push(dirs, dynstr_as_c_str(curpath));
+    if (!strstack_push(dirs, dynstr_as_c_str(curpath))) {
+        goto generate_directory_playlist_cleanup;
+    }
 
     while (strstack_depth(dirs) > 0) {
-        dynstr_assign(curpath, strstack_top(dirs));
+        dynstr_assign(curpath, strstack_peek_top(dirs));
         strstack_pop(dirs);
 
-        dp = opendir(dynstr_as_c_str(curpath) + 6);
+        dp = opendir(dynstr_as_c_str(curpath) + FILE_PREFIX_LEN);
         if (dp == NULL) {
             perror ("Couldn't open the directory");
-            return;
+            goto generate_directory_playlist_cleanup;
         }
 
         // Iterate through the current directory and add all the files, saving
         // directories for later
-        dynstr_append_c_str(curpath, "/");
+        if (!dynstr_append_c_str(curpath, "/")) {
+            goto generate_directory_playlist_cleanup;
+        }
         size_t curpath_initial_len = dynstr_len(curpath);
         while ((ep = readdir (dp)) != NULL) {
             dynstr_truncate(curpath, curpath_initial_len);
-            dynstr_append_c_str(curpath, ep->d_name);
+            if (!dynstr_append_c_str(curpath, ep->d_name)) {
+                goto generate_directory_playlist_cleanup;
+            }
             const char *complete_path = dynstr_as_c_str(curpath);
 
             if (ep->d_type == DT_DIR) {
-                strstack_push(dirs, complete_path);
+                if (!strstack_push(dirs, complete_path)) {
+                    goto generate_directory_playlist_cleanup;
+                }
             } else {
                 if (AUD_EXT_UNKNOWN != kz_get_ext(complete_path)) {
                     dram_list_save(pl, complete_path);
@@ -222,8 +232,14 @@ static void generate_directory_playlist(playlist_operator_handle_t pl, dynstr_ha
 
         // Close our file handle before descending further
         closedir(dp);
+        dp = NULL;
     }
 
+generate_directory_playlist_cleanup:
+    if (dp != NULL) {
+        closedir(dp);
+        dp = NULL;
+    }
     strstack_destroy(dirs);
 }
 
@@ -274,7 +290,7 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     // Iterate through the current path segments and assemble the base URL
                     for (size_t i = 0; i < strstack_depth(s_curpath); ++i) {
                         dynstr_append_c_str(path, "/");
-                        dynstr_append_c_str(path, strstack_get(s_curpath, i));
+                        dynstr_append_c_str(path, strstack_peek_lifo(s_curpath, i));
                     }
 
                     // Check if this was the "play all" button or a single file
@@ -326,7 +342,7 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
             dynstr_append_c_str(path, "/sdcard");
             for (int i = 0; i < strstack_depth(s_curpath); ++i) {
                 dynstr_append_c_str(path, "/");
-                dynstr_append_c_str(path, strstack_get(s_curpath, i));
+                dynstr_append_c_str(path, strstack_peek_lifo(s_curpath, i));
             }
             create_dir_list(dynstr_as_c_str(path));
             set_highlighted_line(0);

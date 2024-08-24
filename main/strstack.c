@@ -103,7 +103,7 @@ void strstack_pop(strstack_handle_t s) {
     s->ends_count--;
 }
 
-char *strstack_top(strstack_handle_t s) {
+const char *strstack_peek_top(strstack_handle_t s) {
     if (s->ends_count == 0) {
         return NULL;
     }
@@ -113,14 +113,24 @@ char *strstack_top(strstack_handle_t s) {
     return &s->stack[s->ends[s->ends_count - 2]];
 }
 
-char *strstack_get(strstack_handle_t s, size_t stack_depth) {
-    if (stack_depth >= s->ends_count) {
+const char *strstack_peek(strstack_handle_t s, size_t stack_depth) {
+    if (stack_depth + 1 > s->ends_count) {
         return NULL;
     }
-    if (stack_depth == 0) {
+    if (stack_depth == s->ends_count - 1) {
         return s->stack;
     }
-    return &s->stack[s->ends[stack_depth - 1]];
+    return &s->stack[s->ends[s->ends_count - stack_depth - 2]];
+}
+
+const char *strstack_peek_lifo(strstack_handle_t s, size_t position) {
+    if (position >= s->ends_count) {
+        return NULL;
+    }
+    if (position == 0) {
+        return s->stack;
+    }
+    return &s->stack[s->ends[position - 1]];
 }
 
 void strstack_destroy(strstack_handle_t s) {
