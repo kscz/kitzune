@@ -13,6 +13,9 @@
 #include "bt_be.h"
 #include "ui_bt.h"
 
+#include "playlist.h"
+#include "player_be.h"
+
 #define TAG "UI_BT"
 
 typedef enum {
@@ -127,7 +130,7 @@ disp_state_t ui_bt_handle_input(periph_service_handle_t handle, periph_service_e
                     } else {
                         // Connect BT backend to selected device
                         bt_be_connect_ad2p(s_bt_list[s_hl_line].bda);
-                        //player_be_set_hp_bt();
+                        player_be_set_bt_hp();
                     }
                 }
                 break;

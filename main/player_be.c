@@ -30,6 +30,8 @@
 #include "sdcard_list.h"
 #include "board.h"
 
+#include "a2dp_stream.h"
+
 #include "kz_util.h"
 #include "lvgl.h"
 #include "ui_common.h"
@@ -41,6 +43,7 @@ typedef enum {
     PLAYER_BE_PLAYLIST_MSG,
     PLAYER_BE_PLAYPAUSE_MSG,
     PLAYER_BE_NEXT_MSG,
+    PLAYER_BE_BT_HEADPHONES_MSG,
 } player_be_msg_type;
 
 typedef struct {
@@ -63,16 +66,18 @@ static playlist_operation_t s_pl_oper; // only valid if s_playlist is non-NULL
 static uint32_t s_playlist_len = 0;
 
 static audio_pipeline_handle_t s_pipeline = NULL;
-static audio_element_handle_t s_hp_stream, s_fs_stream;
+static audio_element_handle_t s_hp_stream, s_fs_stream, s_bt_hp_stream;
 static audio_element_handle_t s_mp3_stream, s_flac_stream, s_aac_stream,
                               s_wav_stream, s_ogg_stream, s_opus_stream;
 static audio_element_handle_t s_current_decoder = NULL;
 static const char *s_current_ext_str = NULL;
 static audio_extension_e s_current_ext = AUD_EXT_UNKNOWN;
-static bool s_playmode_is_shuffle = true;
 static audio_event_iface_handle_t s_evt;
 
 static TaskHandle_t s_task = NULL;
+
+static bool s_playmode_is_shuffle = true;
+static bool s_hp_is_bt = false;
 
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait) {
     player_be_msg_u m;
@@ -86,6 +91,14 @@ BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType
 esp_err_t player_playpause(void) {
     player_be_msg_u msg;
     msg.type = PLAYER_BE_PLAYPAUSE_MSG;
+    xQueueSendToBack(s_player_be_queue, &msg, 0);
+    xTaskAbortDelay(s_task);
+    return ESP_OK;
+}
+
+esp_err_t player_be_set_bt_hp(void) {
+    player_be_msg_u msg;
+    msg.type = PLAYER_BE_BT_HEADPHONES_MSG;
     xQueueSendToBack(s_player_be_queue, &msg, 0);
     xTaskAbortDelay(s_task);
     return ESP_OK;
@@ -188,7 +201,8 @@ static void configure_and_run_playlist(const char *url) {
         audio_pipeline_unlink(s_pipeline);
         audio_element_terminate(s_current_decoder);
         set_decoder_info(ext);
-        audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
+        const char *headphone = s_hp_is_bt ? "bt" : "hp";
+        audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, headphone}, 3);
         audio_pipeline_set_listener(s_pipeline, s_evt);
     }
     audio_pipeline_run(s_pipeline);
@@ -279,6 +293,12 @@ void player_main(void) {
 
     set_decoder_info(kz_get_ext(url));
 
+    a2dp_stream_config_t a2dp_config = {
+        .type = AUDIO_STREAM_WRITER,
+        .user_callback = {0},
+    };
+    s_bt_hp_stream = a2dp_stream_init(&a2dp_config);
+
     // at this point we should have everything we need to start playing!
     // build up the pipeline!
     audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
@@ -289,8 +309,9 @@ void player_main(void) {
     audio_pipeline_register(s_pipeline, s_wav_stream, "wav");
     audio_pipeline_register(s_pipeline, s_aac_stream, "aac");
     audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
+    audio_pipeline_register(s_pipeline, s_bt_hp_stream, "bt");
 
-    const char *link_tag[3] = {"fs", s_current_ext_str, "hp"};
+    const char *link_tag[3] = {"fs", s_current_ext_str, "bt"};
     audio_pipeline_link(s_pipeline, &link_tag[0], 3);
 
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
@@ -318,6 +339,9 @@ void player_main(void) {
                 } else {
                     s_pl_oper.current(s_playlist, &url);
                 }
+                configure_and_run_playlist(url);
+            } else if (be_msg.type == PLAYER_BE_BT_HEADPHONES_MSG) {
+                s_hp_is_bt = true;
                 configure_and_run_playlist(url);
             }
         }
