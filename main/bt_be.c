@@ -230,15 +230,6 @@ esp_err_t bt_be_start_discovery(bt_be_disc_cb_t disc_comp_cb) {
     return ESP_OK;
 }
 
-static void bt_be_gap_start_up(void)
-{
-    /* register GAP callback function */
-    esp_bt_gap_register_callback(bt_app_gap_cb);
-
-    char *dev_name = "KITZUNE";
-    esp_bt_dev_set_device_name(dev_name);
-}
-
 void bt_be_init(void)
 {
     esp_err_t ret;
@@ -278,5 +269,8 @@ void bt_be_init(void)
     esp_bt_pin_code_t pin_code;
     esp_bt_gap_set_pin(pin_type, 0, pin_code);
 
-    bt_be_gap_start_up();
+    /* register GAP callback function */
+    esp_bt_gap_register_callback(bt_app_gap_cb);
+
+    esp_bt_dev_set_device_name("KITZUNE");
 }
