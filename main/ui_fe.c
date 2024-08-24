@@ -15,6 +15,7 @@
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 #include "dynstr.h"
+#include "strstack.h"
 #include "kz_util.h"
 #include "player_be.h"
 #include "ui_common.h"
@@ -36,8 +37,7 @@ static ui_fe_item_t *s_fe_list = NULL;
 static size_t s_fe_list_size = 0;
 static size_t s_fe_list_count = 0;
 
-static char **s_cur_path = NULL;
-static size_t s_cur_path_len = 0, s_cur_path_size = 0;
+static strstack_handle_t s_curpath = NULL;
 
 static size_t s_hl_line = 0;
 static lv_coord_t s_hor_res, s_ver_res;
@@ -120,7 +120,7 @@ static void add_dir_ent(const char *name, bool is_dir) {
 static void create_dir_list(const char *dir) {
     DIR *dp;
     struct dirent *ep;
-    if (s_cur_path_len != 0) {
+    if (strstack_depth(s_curpath) != 0) {
         add_dir_ent(LV_SYMBOL_UP " Up Directory", false);
     }
 
@@ -151,39 +151,14 @@ static void clear_dir_list() {
     s_hl_line = 0;
 }
 
-// Add a path chunk to the current path array
-static void push_cur_path(const char *path_segment) {
-    if (s_cur_path_len == s_cur_path_size) {
-        s_cur_path_size = s_cur_path_size == 0 ? 2 : s_cur_path_size * 2;
-        s_cur_path = realloc(s_cur_path, sizeof(*s_cur_path) * s_cur_path_size);
-        if (s_cur_path == NULL) {
-            ESP_LOGE(TAG, "Failed to allocate space!");
-            while(1) {}
-        }
-    }
-    const size_t path_segment_len = strlen(path_segment);
-    s_cur_path[s_cur_path_len] = malloc(path_segment_len + 1);
-    if (s_cur_path[s_cur_path_len] == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate space!");
-        while(1) {}
-    }
-    strcpy(s_cur_path[s_cur_path_len], path_segment);
-    s_cur_path_len++;
-}
-
-// Remove the last entry of the current path array
-static void pop_cur_path(void) {
-    s_cur_path_len--;
-    free(s_cur_path[s_cur_path_len]);
-    s_cur_path[s_cur_path_len] = NULL;
-}
-
 // Create the initial screen with the SD card root directory listing
 esp_err_t ui_fe_init(void) {
     lv_disp_t *disp = ui_get_display();
     if (disp == NULL) {
         return ESP_FAIL;
     }
+    s_curpath = strstack_new();
+
     s_hor_res = disp->driver->hor_res;
     s_ver_res = disp->driver->ver_res;
     s_screen = lv_obj_create(NULL);
@@ -201,6 +176,7 @@ esp_err_t ui_fe_init(void) {
     create_dir_list("/sdcard");
     set_highlighted_line(0);
 
+
     return ESP_OK;
 }
 
@@ -208,62 +184,47 @@ lv_obj_t *ui_fe_get_screen(void) {
     return s_screen;
 }
 
-// Create a playlist by recursively calling this function to descend into directories
-// This function is kind of a mess of pointers right now - allocation is challenging
-static void r_generate_playlist(playlist_operator_handle_t pl, dynstr_handle_t curpath) {
+// Create a playlist for a directory
+static void generate_directory_playlist(playlist_operator_handle_t pl, dynstr_handle_t curpath) {
     DIR *dp;
     struct dirent *ep;
 
-    // FIXME - we use this to skip past the "file:/" in front of the path, but it's gross
-    dp = opendir(dynstr_as_c_str(curpath) + 6);
-    if (dp == NULL) {
-        perror ("Couldn't open the directory");
-        return;
-    }
+    strstack_handle_t dirs = strstack_new();
+    strstack_push(dirs, dynstr_as_c_str(curpath));
 
-    // Iterate through the current directory and add all the files, saving
-    // directories for later
-    char **dirs = malloc(sizeof(char *) * 4);
-    size_t dirs_count = 0, dirs_size = 4;
-    dynstr_append_c_str(curpath, "/");
-    size_t curpath_initial_len = dynstr_len(curpath);
-    while ((ep = readdir (dp)) != NULL) {
-        if (ep->d_type == DT_DIR) {
-            if (dirs_count == dirs_size) {
-                dirs_size = dirs_size * 2;
-                dirs = realloc(dirs, sizeof(*dirs) * dirs_size);
-            }
-            dirs[dirs_count] = malloc(strlen(ep->d_name) + 1);
-            strcpy(dirs[dirs_count], ep->d_name);
-            dirs_count++;
-        } else {
+    while (strstack_depth(dirs) > 0) {
+        dynstr_assign(curpath, strstack_top(dirs));
+        strstack_pop(dirs);
+
+        dp = opendir(dynstr_as_c_str(curpath) + 6);
+        if (dp == NULL) {
+            perror ("Couldn't open the directory");
+            return;
+        }
+
+        // Iterate through the current directory and add all the files, saving
+        // directories for later
+        dynstr_append_c_str(curpath, "/");
+        size_t curpath_initial_len = dynstr_len(curpath);
+        while ((ep = readdir (dp)) != NULL) {
             dynstr_truncate(curpath, curpath_initial_len);
             dynstr_append_c_str(curpath, ep->d_name);
-
             const char *complete_path = dynstr_as_c_str(curpath);
-            if (AUD_EXT_UNKNOWN != kz_get_ext(complete_path)) {
-                dram_list_save(pl, complete_path);
+
+            if (ep->d_type == DT_DIR) {
+                strstack_push(dirs, complete_path);
+            } else {
+                if (AUD_EXT_UNKNOWN != kz_get_ext(complete_path)) {
+                    dram_list_save(pl, complete_path);
+                }
             }
         }
+
+        // Close our file handle before descending further
+        closedir(dp);
     }
 
-    // Close our file handle before descending further
-    closedir(dp);
-
-    // Handle recursing into all the subdirectories we saved aside for later
-    for (size_t i = 0; i < dirs_count; ++i) {
-        dynstr_truncate(curpath, curpath_initial_len);
-        dynstr_append_c_str(curpath, dirs[i]);
-        r_generate_playlist(pl, curpath);
-
-        // Free the directory names as we go through
-        free(dirs[i]);
-        dirs[i] = NULL;
-    }
-
-    // Free the directory array
-    free(dirs);
-    dirs = NULL;
+    strstack_destroy(dirs);
 }
 
 // Process input from the front keys
@@ -291,11 +252,11 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                 break;
             }
             case INPUT_KEY_USER_ID_CENTER: {
-                if (s_cur_path_len != 0 && s_hl_line == 0) {
-                    pop_cur_path();
+                if (strstack_depth(s_curpath) != 0 && s_hl_line == 0) {
+                    strstack_pop(s_curpath);
                     should_update = true;
                 } else if(s_fe_list[s_hl_line].is_dir) {
-                    push_cur_path(s_fe_list[s_hl_line].name);
+                    strstack_push(s_curpath, s_fe_list[s_hl_line].name);
                     should_update = true;
                 } else if (!s_fe_list[s_hl_line].is_dir) {
                     // We should fall here if they hit the "play all" button or
@@ -311,16 +272,16 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                     dynstr_append_c_str(path, "file://sdcard");
 
                     // Iterate through the current path segments and assemble the base URL
-                    for (size_t i = 0; i < s_cur_path_len; ++i) {
+                    for (size_t i = 0; i < strstack_depth(s_curpath); ++i) {
                         dynstr_append_c_str(path, "/");
-                        dynstr_append_c_str(path, s_cur_path[i]);
+                        dynstr_append_c_str(path, strstack_get(s_curpath, i));
                     }
 
                     // Check if this was the "play all" button or a single file
-                    if ((s_cur_path_len == 0 && s_hl_line == 0) ||
-                        (s_cur_path_len != 0 && s_hl_line == 1))
+                    if ((strstack_depth(s_curpath) == 0 && s_hl_line == 0) ||
+                        (strstack_depth(s_curpath) != 0 && s_hl_line == 1))
                     {
-                        r_generate_playlist(pl, path);
+                        generate_directory_playlist(pl, path);
                     } else {
                         dynstr_append_c_str(path, "/");
                         dynstr_append_c_str(path, s_fe_list[s_hl_line].name);
@@ -343,14 +304,14 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                 break;
             }
             case INPUT_KEY_USER_ID_LEFT:
-                if (s_cur_path_len != 0) {
-                    pop_cur_path();
+                if (strstack_depth(s_curpath) != 0) {
+                    strstack_pop(s_curpath);
                     should_update = true;
                 }
                 break;
             case INPUT_KEY_USER_ID_RIGHT:
                 if(s_fe_list[s_hl_line].is_dir) {
-                    push_cur_path(s_fe_list[s_hl_line].name);
+                    strstack_push(s_curpath, s_fe_list[s_hl_line].name);
                     should_update = true;
                 }
                 break;
@@ -360,17 +321,16 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
 
         if (should_update) {
             clear_dir_list();
+            dynstr_handle_t path = dynstr_new();
 
-            // FIXME Actually check the path lengths
-            char fullpath[1024];
-            char *cur_p = stpcpy(fullpath, "/sdcard");
-            for (int i = 0; i < s_cur_path_len; ++i) {
-                *cur_p = '/';
-                cur_p++;
-                cur_p = stpcpy(cur_p, s_cur_path[i]);
+            dynstr_append_c_str(path, "/sdcard");
+            for (int i = 0; i < strstack_depth(s_curpath); ++i) {
+                dynstr_append_c_str(path, "/");
+                dynstr_append_c_str(path, strstack_get(s_curpath, i));
             }
-            create_dir_list(fullpath);
+            create_dir_list(dynstr_as_c_str(path));
             set_highlighted_line(0);
+            dynstr_destroy(path);
         }
     }
 
