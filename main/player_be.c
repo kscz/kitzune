@@ -78,6 +78,11 @@ static TaskHandle_t s_task = NULL;
 
 static bool s_playmode_is_shuffle = true;
 static bool s_hp_is_bt = false;
+static esp_periph_handle_t s_bt_periph;
+
+void player_be_init(esp_periph_handle_t bt_periph) {
+    s_bt_periph = bt_periph;
+}
 
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait) {
     player_be_msg_u m;
@@ -105,18 +110,22 @@ esp_err_t player_be_set_bt_hp(void) {
 }
 
 static esp_err_t playpause_playlist(void) {
-    audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
+    audio_element_state_t el_state = s_hp_is_bt ? 
+       audio_element_get_state(s_bt_hp_stream) : audio_element_get_state(s_hp_stream);
     switch (el_state) {
         case AEL_STATE_INIT :
             ESP_LOGI(TAG, "Starting audio pipeline");
+            periph_bt_play(s_bt_periph);
             audio_pipeline_run(s_pipeline);
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
+            periph_bt_pause(s_bt_periph);
             audio_pipeline_pause(s_pipeline);
             break;
         case AEL_STATE_PAUSED :
             ESP_LOGI(TAG, "Resuming audio pipeline");
+            periph_bt_play(s_bt_periph);
             audio_pipeline_resume(s_pipeline);
             break;
         default :
@@ -189,6 +198,7 @@ static void configure_and_run_playlist(const char *url) {
     ESP_LOGI(TAG, "URL: %s", url);
     ui_np_set_song_title(url + 14);
     audio_pipeline_stop(s_pipeline);
+    periph_bt_stop(s_bt_periph);
     audio_pipeline_wait_for_stop(s_pipeline);
 
     audio_extension_e ext = kz_get_ext(url);
@@ -206,6 +216,7 @@ static void configure_and_run_playlist(const char *url) {
         audio_pipeline_set_listener(s_pipeline, s_evt);
     }
     audio_pipeline_run(s_pipeline);
+    periph_bt_play(s_bt_periph);
 }
 
 static void advance_playlist() {
@@ -349,6 +360,7 @@ void player_main(void) {
             continue;
         }
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
+            ESP_LOGE(TAG, "Got message from 0x%08lx: %d", (uint32_t)msg.source, msg.cmd);
             // Set music info for a new song to be played
             if (msg.source == (void *) s_current_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
@@ -362,8 +374,18 @@ void player_main(void) {
             }
             // Advance to the next song when previous finishes
             if (msg.source == (void *) s_hp_stream
+                && msg.cmd == AEL_MSG_CMD_REPORT_STATUS)
+            {
+                audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
+                if (el_state == AEL_STATE_FINISHED) {
+                    ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
+                    advance_playlist();
+                }
+            }
+            if (msg.source == (void *) s_bt_hp_stream
                 && msg.cmd == AEL_MSG_CMD_REPORT_STATUS) {
                 audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
+                ESP_LOGE(TAG, "Got state: %d", el_state);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
                     advance_playlist();
