@@ -151,7 +151,7 @@ void app_main(void)
     bt_be_init();
 
     // launch player_backend task!
-    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 1, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 5, NULL, APP_CPU_NUM);
     vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "[ 2 ] Start codec chip");
