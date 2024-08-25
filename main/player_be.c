@@ -23,6 +23,8 @@
 #include "wav_decoder.h"
 #include "aac_decoder.h"
 
+#include "filter_resample.h"
+
 #include "esp_peripherals.h"
 #include "periph_service.h"
 #include "periph_sdcard.h"
@@ -69,6 +71,7 @@ static audio_pipeline_handle_t s_pipeline = NULL;
 static audio_element_handle_t s_hp_stream, s_fs_stream, s_bt_hp_stream;
 static audio_element_handle_t s_mp3_stream, s_flac_stream, s_aac_stream,
                               s_wav_stream, s_ogg_stream, s_opus_stream;
+static audio_element_handle_t s_resampler = NULL;
 static audio_element_handle_t s_current_decoder = NULL;
 static const char *s_current_ext_str = NULL;
 static audio_extension_e s_current_ext = AUD_EXT_UNKNOWN;
@@ -77,7 +80,7 @@ static audio_event_iface_handle_t s_evt;
 static TaskHandle_t s_task = NULL;
 
 static bool s_playmode_is_shuffle = true;
-static bool s_hp_is_bt = false;
+static bool s_hp_is_bt = false, s_hp_is_bt_desired = false;
 static esp_periph_handle_t s_bt_periph;
 
 void player_be_init(esp_periph_handle_t bt_periph) {
@@ -120,7 +123,7 @@ static esp_err_t playpause_playlist(void) {
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
-            periph_bt_pause(s_bt_periph);
+            periph_bt_stop(s_bt_periph);
             audio_pipeline_pause(s_pipeline);
             break;
         case AEL_STATE_PAUSED :
@@ -197,8 +200,8 @@ bool player_get_shuffle(void) {
 static void configure_and_run_playlist(const char *url) {
     ESP_LOGI(TAG, "URL: %s", url);
     ui_np_set_song_title(url + 14);
-    audio_pipeline_stop(s_pipeline);
     periph_bt_stop(s_bt_periph);
+    audio_pipeline_stop(s_pipeline);
     audio_pipeline_wait_for_stop(s_pipeline);
 
     audio_extension_e ext = kz_get_ext(url);
@@ -207,12 +210,16 @@ static void configure_and_run_playlist(const char *url) {
     audio_pipeline_reset_elements(s_pipeline);
     audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
 
-    if (s_current_ext != ext) {
+    if (s_current_ext != ext || s_hp_is_bt_desired != s_hp_is_bt) {
+        s_hp_is_bt = s_hp_is_bt_desired;
         audio_pipeline_unlink(s_pipeline);
         audio_element_terminate(s_current_decoder);
         set_decoder_info(ext);
-        const char *headphone = s_hp_is_bt ? "bt" : "hp";
-        audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, headphone}, 3);
+        if (s_hp_is_bt) {
+            audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "rsp", "bt"}, 4);
+        } else {
+            audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
+        }
         audio_pipeline_set_listener(s_pipeline, s_evt);
     }
     audio_pipeline_run(s_pipeline);
@@ -304,6 +311,16 @@ void player_main(void) {
 
     set_decoder_info(kz_get_ext(url));
 
+    rsp_filter_cfg_t rsp_cfg = DEFAULT_RESAMPLE_FILTER_CONFIG();
+    rsp_cfg.src_rate = 48000;
+    rsp_cfg.src_ch = 2;
+    rsp_cfg.dest_rate = 44100;
+    rsp_cfg.dest_ch = 2;
+    rsp_cfg.mode = RESAMPLE_DECODE_MODE;
+    rsp_cfg.complexity = 0;
+    rsp_cfg.out_rb_size = (32 * 1024);
+    s_resampler = rsp_filter_init(&rsp_cfg);
+
     a2dp_stream_config_t a2dp_config = {
         .type = AUDIO_STREAM_WRITER,
         .user_callback = {0},
@@ -320,10 +337,12 @@ void player_main(void) {
     audio_pipeline_register(s_pipeline, s_wav_stream, "wav");
     audio_pipeline_register(s_pipeline, s_aac_stream, "aac");
     audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
+    audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
+    audio_pipeline_register(s_pipeline, s_resampler, "rsp");
     audio_pipeline_register(s_pipeline, s_bt_hp_stream, "bt");
 
-    const char *link_tag[3] = {"fs", s_current_ext_str, "bt"};
-    audio_pipeline_link(s_pipeline, &link_tag[0], 3);
+    const char *link_tag[] = {"fs", s_current_ext_str, "rsp", "bt"};
+    audio_pipeline_link(s_pipeline, &link_tag[0], 4);
 
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     s_evt = audio_event_iface_init(&evt_cfg);
@@ -352,7 +371,7 @@ void player_main(void) {
                 }
                 configure_and_run_playlist(url);
             } else if (be_msg.type == PLAYER_BE_BT_HEADPHONES_MSG) {
-                s_hp_is_bt = true;
+                s_hp_is_bt_desired = true;
                 configure_and_run_playlist(url);
             }
         }
@@ -369,23 +388,18 @@ void player_main(void) {
                 ESP_LOGI(TAG, "[ * ] Received music info from decoder, sample_rates=%d, bits=%d, ch=%d, dur=%d",
                          music_info.sample_rates, music_info.bits, music_info.channels, music_info.duration);
                 i2s_stream_set_clk(s_hp_stream, music_info.sample_rates, music_info.bits, music_info.channels);
-                audio_element_setinfo(s_hp_stream, &music_info);
+                rsp_filter_change_src_info(s_resampler, music_info.sample_rates, music_info.channels, music_info.bits);
+                if (!s_hp_is_bt) {
+                    audio_element_setinfo(s_hp_stream, &music_info);
+                } else {
+                    audio_element_setinfo(s_bt_hp_stream, &music_info);
+                }
                 continue;
             }
-            // Advance to the next song when previous finishes
-            if (msg.source == (void *) s_hp_stream
-                && msg.cmd == AEL_MSG_CMD_REPORT_STATUS)
-            {
-                audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
-                if (el_state == AEL_STATE_FINISHED) {
-                    ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
-                    advance_playlist();
-                }
-            }
-            if (msg.source == (void *) s_bt_hp_stream
+            if (msg.source == (void *) s_current_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_STATUS) {
-                audio_element_state_t el_state = audio_element_get_state(s_hp_stream);
-                ESP_LOGE(TAG, "Got state: %d", el_state);
+                audio_element_state_t el_state = audio_element_get_state(s_current_decoder);
+                ESP_LOGE(TAG, "Got dec state: %d", el_state);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
                     advance_playlist();
