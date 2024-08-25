@@ -175,6 +175,11 @@ void app_main(void)
     ESP_LOGI(TAG, "[3.8] Start bt peripheral");
     esp_periph_start(set, bt_periph);
 
+    // launch player_backend task!
+    player_be_init(bt_periph);
+    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 1, NULL, APP_CPU_NUM);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     ESP_LOGI(TAG, "Install panel IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_i2c_config_t io_config = {
