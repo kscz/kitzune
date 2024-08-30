@@ -8,6 +8,7 @@ set(COMPONENT_SRCS
     "ui_fe.c"
     "ui_mm.c"
     "ui_np.c"
+    "ui_settings.c"
     "bt_be.c"
     "player_be.c")
 set(COMPONENT_ADD_INCLUDEDIRS .)

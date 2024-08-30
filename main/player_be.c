@@ -113,7 +113,7 @@ esp_err_t player_be_set_bt_hp(void) {
 }
 
 static esp_err_t playpause_playlist(void) {
-    audio_element_state_t el_state = s_hp_is_bt ? 
+    audio_element_state_t el_state = s_hp_is_bt ?
        audio_element_get_state(s_bt_hp_stream) : audio_element_get_state(s_hp_stream);
     switch (el_state) {
         case AEL_STATE_INIT :
@@ -123,7 +123,7 @@ static esp_err_t playpause_playlist(void) {
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
-            periph_bt_stop(s_bt_periph);
+            periph_bt_pause(s_bt_periph);
             audio_pipeline_pause(s_pipeline);
             break;
         case AEL_STATE_PAUSED :
@@ -200,7 +200,7 @@ bool player_get_shuffle(void) {
 static void configure_and_run_playlist(const char *url) {
     ESP_LOGI(TAG, "URL: %s", url);
     ui_np_set_song_title(url + 14);
-    periph_bt_stop(s_bt_periph);
+    periph_bt_pause(s_bt_periph);
     audio_pipeline_stop(s_pipeline);
     audio_pipeline_wait_for_stop(s_pipeline);
 
@@ -235,6 +235,38 @@ static void advance_playlist() {
         s_pl_oper.next(s_playlist, 1, &url);
     }
     configure_and_run_playlist(url);
+}
+
+static void player_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
+    switch(event) {
+        case ESP_A2D_CONNECTION_STATE_EVT:
+            ESP_LOGI(TAG, "CONNECTION_STATE_EVT");
+            break;
+        case ESP_A2D_AUDIO_STATE_EVT:
+            ESP_LOGI(TAG, "AUDIO_STATE_EVT");
+            break;
+        case ESP_A2D_AUDIO_CFG_EVT:
+            ESP_LOGI(TAG, "AUDIO_CFG_EVT");
+            break;
+        case ESP_A2D_MEDIA_CTRL_ACK_EVT:
+            ESP_LOGI(TAG, "MEDIA_CTRL_ACK_EVT");
+            break;
+        case ESP_A2D_PROF_STATE_EVT:
+            ESP_LOGI(TAG, "PROF_STATE_EVT");
+            break;
+        case ESP_A2D_SNK_PSC_CFG_EVT:
+            ESP_LOGI(TAG, "SNK_PSC_CFG_EVT");
+            break;
+        case ESP_A2D_SNK_SET_DELAY_VALUE_EVT:
+            ESP_LOGI(TAG, "SNK_SET_DELAY_VALUE_EVT");
+            break;
+        case ESP_A2D_SNK_GET_DELAY_VALUE_EVT:
+            ESP_LOGI(TAG, "SNK_GET_DELAY_VALUE_EVT");
+            break;
+        case ESP_A2D_REPORT_SNK_DELAY_VALUE_EVT:
+            ESP_LOGI(TAG, "REPORT_SNK_DELAY_VALUE_EVT");
+            break;
+    }
 }
 
 void player_main(void) {
@@ -323,7 +355,9 @@ void player_main(void) {
 
     a2dp_stream_config_t a2dp_config = {
         .type = AUDIO_STREAM_WRITER,
-        .user_callback = {0},
+        .user_callback = {
+            .user_a2d_cb = player_a2d_cb
+        },
     };
     s_bt_hp_stream = a2dp_stream_init(&a2dp_config);
 
@@ -341,8 +375,11 @@ void player_main(void) {
     audio_pipeline_register(s_pipeline, s_resampler, "rsp");
     audio_pipeline_register(s_pipeline, s_bt_hp_stream, "bt");
 
-    const char *link_tag[] = {"fs", s_current_ext_str, "rsp", "bt"};
-    audio_pipeline_link(s_pipeline, &link_tag[0], 4);
+    // Actvate the bluetooth stream so we can pair
+    audio_element_run(s_bt_hp_stream);
+
+    const char *link_tag[] = {"fs", s_current_ext_str, "hp"};
+    audio_pipeline_link(s_pipeline, &link_tag[0], 3);
 
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     s_evt = audio_event_iface_init(&evt_cfg);

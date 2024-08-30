@@ -40,6 +40,7 @@
 #include "ui_np.h"
 #include "ui_bt.h"
 #include "ui_fe.h"
+#include "ui_settings.h"
 
 static const char *TAG = "MAIN";
 
@@ -89,6 +90,9 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
             case DS_FILE_EXP:
                 next_state = ui_fe_handle_input(handle, evt, board_handle);
                 break;
+            case DS_SETTINGS:
+                next_state = ui_settings_handle_input(handle, evt, board_handle);
+                break;
             default:
                 return ESP_FAIL;
         }
@@ -108,6 +112,9 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
                 break;
             case DS_FILE_EXP:
                 lv_scr_load_anim(ui_fe_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
+                break;
+            case DS_SETTINGS:
+                lv_scr_load_anim(ui_settings_get_screen(), LV_SCR_LOAD_ANIM_MOVE_TOP, 500, 0, false);
                 break;
             case DS_MAIN_MENU:
             default:
@@ -233,6 +240,7 @@ void app_main(void)
     ui_np_init();
     ui_bt_init();
     ui_fe_init();
+    ui_settings_init();
 
     while(1) {
 #if configUSE_TRACE_FACILITY != 0
