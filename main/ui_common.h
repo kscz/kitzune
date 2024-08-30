@@ -4,6 +4,7 @@ typedef enum {
     DS_NOW_PLAYING,
     DS_BLUETOOTH,
     DS_FILE_EXP,
+    DS_SETTINGS,
 } disp_state_t;
 
 void ui_set_play(bool is_playing);
