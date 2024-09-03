@@ -61,9 +61,6 @@ esp_err_t ui_np_init(void) {
 }
 
 disp_state_t ui_np_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle) {
-
-    int player_volume;
-    audio_hal_get_volume(board_handle->audio_hal, &player_volume);
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_CENTER:
@@ -74,21 +71,11 @@ disp_state_t ui_np_handle_input(periph_service_handle_t handle, periph_service_e
                 break;
             case INPUT_KEY_USER_ID_UP:
                 ESP_LOGI(TAG, "[ * ] [Vol+] input key event");
-                player_volume += 2;
-                if (player_volume > 100) {
-                    player_volume = 100;
-                }
-                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+                player_be_volume_up(board_handle);
                 break;
             case INPUT_KEY_USER_ID_DOWN:
                 ESP_LOGI(TAG, "[ * ] [Vol-] input key event");
-                player_volume -= 2;
-                if (player_volume < 0) {
-                    player_volume = 0;
-                }
-                audio_hal_set_volume(board_handle->audio_hal, player_volume);
-                ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+                player_be_volume_down(board_handle);
                 break;
         }
     }
