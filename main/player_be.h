@@ -1,4 +1,6 @@
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait);
+void player_be_volume_up(audio_board_handle_t board_handle);
+void player_be_volume_down(audio_board_handle_t board_handle);
 esp_err_t player_playpause(void);
 esp_err_t player_be_set_bt_hp(void);
 esp_err_t player_next(void);

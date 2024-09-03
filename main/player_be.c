@@ -40,6 +40,7 @@
 #include "ui_np.h"
 
 #define PLAYER_DECODE_IN_PSRAM (true)
+#define PLAYER_DECODER_OUT_BUF_SIZE (16 * 1024)
 
 typedef enum {
     PLAYER_BE_PLAYLIST_MSG,
@@ -85,6 +86,36 @@ static esp_periph_handle_t s_bt_periph;
 
 void player_be_init(esp_periph_handle_t bt_periph) {
     s_bt_periph = bt_periph;
+}
+
+void player_be_volume_up(audio_board_handle_t board_handle) {
+    if (!s_hp_is_bt) {
+        int player_volume;
+        audio_hal_get_volume(board_handle->audio_hal, &player_volume);
+        player_volume += 2;
+        if (player_volume > 100) {
+            player_volume = 100;
+        }
+        audio_hal_set_volume(board_handle->audio_hal, player_volume);
+        ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+    } else {
+        periph_bt_volume_up(s_bt_periph);
+    }
+}
+
+void player_be_volume_down(audio_board_handle_t board_handle) {
+    if (!s_hp_is_bt) {
+        int player_volume;
+        audio_hal_get_volume(board_handle->audio_hal, &player_volume);
+        player_volume -= 2;
+        if (player_volume < 0) {
+            player_volume = 0;
+        }
+        audio_hal_set_volume(board_handle->audio_hal, player_volume);
+        ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+    } else {
+        periph_bt_volume_down(s_bt_periph);
+    }
 }
 
 BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType_t ticksToWait) {
@@ -250,6 +281,15 @@ static void player_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
             break;
         case ESP_A2D_MEDIA_CTRL_ACK_EVT:
             ESP_LOGI(TAG, "MEDIA_CTRL_ACK_EVT");
+            if (param->media_ctrl_stat.cmd == ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY && param->media_ctrl_stat.status == ESP_A2D_MEDIA_CTRL_ACK_SUCCESS) {
+                ESP_LOGI(TAG, "a2dp media ready, starting ...");
+                esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_START);
+            } else if (param->media_ctrl_stat.cmd == ESP_A2D_MEDIA_CTRL_START && param->media_ctrl_stat.status == ESP_A2D_MEDIA_CTRL_ACK_SUCCESS) {
+                ESP_LOGI(TAG, "a2dp media start successfully.");
+            } else if (param->media_ctrl_stat.cmd != ESP_A2D_MEDIA_CTRL_SUSPEND) {
+                // not started successfully, transfer to idle state
+                ESP_LOGI(TAG, "a2dp media start failed.");
+            }
             break;
         case ESP_A2D_PROF_STATE_EVT:
             ESP_LOGI(TAG, "PROF_STATE_EVT");
@@ -312,32 +352,32 @@ void player_main(void) {
     audio_element_set_uri(s_fs_stream, url);
 
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
-    mp3_cfg.out_rb_size = (16 * 1024);
+    mp3_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     mp3_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_mp3_stream = mp3_decoder_init(&mp3_cfg);
 
     flac_decoder_cfg_t flac_cfg = DEFAULT_FLAC_DECODER_CONFIG();
-    flac_cfg.out_rb_size = (16 * 1024);
+    flac_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     flac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_flac_stream  = flac_decoder_init(&flac_cfg);
 
     opus_decoder_cfg_t opus_cfg = DEFAULT_OPUS_DECODER_CONFIG();
-    opus_cfg.out_rb_size = (16 * 1024);
+    opus_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     opus_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_opus_stream  = decoder_opus_init(&opus_cfg);
 
     ogg_decoder_cfg_t ogg_cfg = DEFAULT_OGG_DECODER_CONFIG();
-    ogg_cfg.out_rb_size = (16 * 1024);
+    ogg_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     ogg_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_ogg_stream  = ogg_decoder_init(&ogg_cfg);
 
     wav_decoder_cfg_t wav_cfg = DEFAULT_WAV_DECODER_CONFIG();
-    wav_cfg.out_rb_size = (16 * 1024);
+    wav_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     wav_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_wav_stream  = wav_decoder_init(&wav_cfg);
 
     aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
-    aac_cfg.out_rb_size = (16 * 1024);
+    aac_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_aac_stream  = aac_decoder_init(&aac_cfg);
 
@@ -350,7 +390,7 @@ void player_main(void) {
     rsp_cfg.dest_ch = 2;
     rsp_cfg.mode = RESAMPLE_DECODE_MODE;
     rsp_cfg.complexity = 0;
-    rsp_cfg.out_rb_size = (32 * 1024);
+    rsp_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
     s_resampler = rsp_filter_init(&rsp_cfg);
 
     a2dp_stream_config_t a2dp_config = {

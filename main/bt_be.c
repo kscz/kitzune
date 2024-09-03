@@ -11,6 +11,7 @@
 #include "esp_bt_main.h"
 #include "esp_bt_device.h"
 #include "esp_a2dp_api.h"
+#include "esp_avrc_api.h"
 #include "esp_gap_bt_api.h"
 
 #include "bt_be.h"
@@ -190,7 +191,7 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
     case ESP_BT_GAP_PIN_REQ_EVT: {
             ESP_LOGI(TAG, "ESP_BT_GAP_PIN_REQ_EVT min_16_digit:%d", param->pin_req.min_16_digit);
             if (param->pin_req.min_16_digit) {
-                ESP_LOGI(TAG, "Input pin code: 0000 0000 0000 0000");
+                ESP_LOGI(TAG, "Attempting 16 digit pin: 0000 0000 0000 0000");
                 esp_bt_pin_code_t pin_code = {0};
                 esp_bt_gap_pin_reply(param->pin_req.bda, true, 16, pin_code);
             } else {
@@ -203,7 +204,7 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
             ESP_LOGI(TAG, "ESP_BT_GAP_MODE_CHG_EVT mode:%d", param->mode_chg.mode);
             break;
     default: {
-        ESP_LOGI(TAG, "event: %d", event);
+        ESP_LOGI(TAG, "GAP event: %d", event);
         break;
     }
     }
@@ -276,4 +277,7 @@ void bt_be_init(void)
     esp_bt_gap_register_callback(bt_app_gap_cb);
 
     esp_bt_dev_set_device_name("KITZUNE");
+
+    /* set discoverable and connectable mode, wait to be connected */
+    bt_be_start_discovery(NULL);
 }
