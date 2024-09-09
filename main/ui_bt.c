@@ -68,9 +68,16 @@ esp_err_t ui_bt_init(void) {
 
     // Create a song-title section
     lvgl_port_lock(0);
-    s_bt_menu = lv_label_create(s_screen);
-    lv_label_set_text(s_bt_menu, "Start discovery by pressing the center button!");
+    s_bt_menu = lv_list_create(s_screen);
+    s_bt_list_count = 0;
+    if (esp_bt_gap_get_bond_device_num() == 1) {
+        s_bt_list[s_bt_list_count].list_handle = lv_list_add_text(s_bt_menu, "Re-connect");
+        s_bt_list_count++;
+    }
+    s_bt_list[s_bt_list_count].list_handle = lv_list_add_text(s_bt_menu, "Start discovery");
     lv_obj_set_width(s_bt_menu, LV_HOR_RES);
+    s_bt_list_count++;
+    set_highlighted_line(0);
     lv_obj_align(s_bt_menu, LV_ALIGN_TOP_MID, 0, 12);
     lvgl_port_unlock();
 
@@ -109,11 +116,27 @@ disp_state_t ui_bt_handle_input(periph_service_handle_t handle, periph_service_e
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_CENTER:
                 if (s_state == UIBT_INIT) {
-                    if (bt_be_start_discovery(ui_bt_discovery_complete) == ESP_OK) {
-                        lvgl_port_lock(0);
-                        lv_label_set_text(s_bt_menu, "Discovering...");
-                        lvgl_port_unlock();
-                        s_state = UIBT_DISCOVERING;
+                    if (s_hl_line == 0 && s_bt_list_count > 1) {
+                        if (esp_bt_gap_get_bond_device_num() == 1) {
+                            int devices_size = 1;
+                            esp_bd_addr_t device;
+                            if (ESP_OK == esp_bt_gap_get_bond_device_list(&devices_size, device)) {
+                                // Connect BT backend to selected device
+                                bt_be_connect_ad2p(device);
+                                player_be_set_bt_hp();
+                            }
+                        }
+                    } else {
+                        if (bt_be_start_discovery(ui_bt_discovery_complete) == ESP_OK) {
+                            lvgl_port_lock(0);
+                            lv_obj_del(s_bt_menu);
+                            s_bt_menu = lv_label_create(s_screen);
+                            lv_label_set_text(s_bt_menu, "Discovering...");
+                            lv_obj_set_width(s_bt_menu, LV_HOR_RES);
+                            lv_obj_align(s_bt_menu, LV_ALIGN_TOP_MID, 0, 12);
+                            lvgl_port_unlock();
+                            s_state = UIBT_DISCOVERING;
+                        }
                     }
                 } else if (s_state == UIBT_SELECTING) {
                     if (s_hl_line == 0) {
@@ -135,17 +158,13 @@ disp_state_t ui_bt_handle_input(periph_service_handle_t handle, periph_service_e
                 }
                 break;
             case INPUT_KEY_USER_ID_UP:
-                if (s_state == UIBT_SELECTING) {
-                    if (s_hl_line != 0) {
-                        set_highlighted_line(s_hl_line - 1);
-                    }
+                if (s_hl_line != 0) {
+                    set_highlighted_line(s_hl_line - 1);
                 }
                 break;
             case INPUT_KEY_USER_ID_DOWN:
-                if (s_state == UIBT_SELECTING) {
-                    if (s_hl_line != s_bt_list_count - 1) {
-                        set_highlighted_line(s_hl_line + 1);
-                    }
+                if (s_hl_line != s_bt_list_count - 1) {
+                    set_highlighted_line(s_hl_line + 1);
                 }
                 break;
             case INPUT_KEY_USER_ID_LEFT:
