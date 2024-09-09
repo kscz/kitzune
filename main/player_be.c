@@ -154,8 +154,8 @@ static esp_err_t playpause_playlist(void) {
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
-            periph_bt_pause(s_bt_periph);
             audio_pipeline_pause(s_pipeline);
+            periph_bt_pause(s_bt_periph);
             break;
         case AEL_STATE_PAUSED :
             ESP_LOGI(TAG, "Resuming audio pipeline");
@@ -229,23 +229,32 @@ bool player_get_shuffle(void) {
 }
 
 static void configure_and_run_playlist(const char *url) {
-    ESP_LOGI(TAG, "URL: %s", url);
-    ui_np_set_song_title(url + 14);
-    periph_bt_pause(s_bt_periph);
     audio_pipeline_stop(s_pipeline);
+    periph_bt_stop(s_bt_periph);
     audio_pipeline_wait_for_stop(s_pipeline);
 
-    audio_extension_e ext = kz_get_ext(url);
-    audio_element_set_uri(s_fs_stream, url);
+    audio_extension_e ext = AUD_EXT_UNKNOWN;
+    if (url != NULL) {
+        ESP_LOGI(TAG, "URL: %s", url);
+        ui_np_set_song_title(url + 14);
+        ext = kz_get_ext(url);
+        audio_element_set_uri(s_fs_stream, url);
+    }
     audio_pipeline_reset_ringbuffer(s_pipeline);
     audio_pipeline_reset_elements(s_pipeline);
     audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
 
-    if (s_current_ext != ext || s_hp_is_bt_desired != s_hp_is_bt) {
+    if ((ext != AUD_EXT_UNKNOWN && s_current_ext != ext) ||
+            s_hp_is_bt_desired != s_hp_is_bt)
+    {
         s_hp_is_bt = s_hp_is_bt_desired;
         audio_pipeline_unlink(s_pipeline);
         audio_element_terminate(s_current_decoder);
-        set_decoder_info(ext);
+
+        if (ext != AUD_EXT_UNKNOWN) {
+            set_decoder_info(ext);
+        }
+
         if (s_hp_is_bt) {
             audio_pipeline_relink(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "rsp", "bt"}, 4);
         } else {
@@ -253,8 +262,8 @@ static void configure_and_run_playlist(const char *url) {
         }
         audio_pipeline_set_listener(s_pipeline, s_evt);
     }
-    audio_pipeline_run(s_pipeline);
     periph_bt_play(s_bt_periph);
+    audio_pipeline_run(s_pipeline);
 }
 
 static void advance_playlist() {
@@ -449,14 +458,13 @@ void player_main(void) {
                 configure_and_run_playlist(url);
             } else if (be_msg.type == PLAYER_BE_BT_HEADPHONES_MSG) {
                 s_hp_is_bt_desired = true;
-                configure_and_run_playlist(url);
+                configure_and_run_playlist(NULL);
             }
         }
         if (ESP_OK != audio_event_iface_listen(s_evt, &msg, pdMS_TO_TICKS(1000))) {
             continue;
         }
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT) {
-            ESP_LOGE(TAG, "Got message from 0x%08lx: %d", (uint32_t)msg.source, msg.cmd);
             // Set music info for a new song to be played
             if (msg.source == (void *) s_current_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
@@ -476,7 +484,6 @@ void player_main(void) {
             if (msg.source == (void *) s_current_decoder
                 && msg.cmd == AEL_MSG_CMD_REPORT_STATUS) {
                 audio_element_state_t el_state = audio_element_get_state(s_current_decoder);
-                ESP_LOGE(TAG, "Got dec state: %d", el_state);
                 if (el_state == AEL_STATE_FINISHED) {
                     ESP_LOGI(TAG, "[ * ] Finished, advancing to the next song");
                     advance_playlist();
@@ -484,27 +491,4 @@ void player_main(void) {
             }
         }
     }
-
-//    ESP_LOGI(TAG, "[ 7 ] Stop audio_pipeline");
-//    audio_pipeline_stop(s_pipeline);
-//    audio_pipeline_wait_for_stop(s_pipeline);
-//    audio_pipeline_terminate(s_pipeline);
-//
-//    audio_pipeline_unregister(s_pipeline, s__decoder);
-//    audio_pipeline_unregister(s_pipeline, i2s_stream_writer);
-//
-//    /* Terminate the pipeline before removing the listener */
-//    audio_pipeline_remove_listener(pipeline);
-//
-//    /* Stop all peripherals before removing the listener */
-//    esp_periph_set_stop_all(set);
-//    audio_event_iface_remove_listener(esp_periph_set_get_event_iface(set), evt);
-//
-//    /* Make sure audio_pipeline_remove_listener & audio_event_iface_remove_listener are called before destroying event_iface */
-//    audio_event_iface_destroy(evt);
-//
-//    /* Release all resources */
-//    audio_pipeline_deinit(pipeline);
-//    audio_element_deinit(i2s_stream_writer);
-//    audio_element_deinit(flac_decoder);
 }

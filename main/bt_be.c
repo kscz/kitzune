@@ -277,7 +277,4 @@ void bt_be_init(void)
     esp_bt_gap_register_callback(bt_app_gap_cb);
 
     esp_bt_dev_set_device_name("KITZUNE");
-
-    /* set discoverable and connectable mode, wait to be connected */
-    bt_be_start_discovery(NULL);
 }
