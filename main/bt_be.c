@@ -250,6 +250,11 @@ void bt_be_init(void)
         return;
     }
 
+    if ((ret = esp_bredr_tx_power_set(ESP_PWR_LVL_N6, ESP_PWR_LVL_N0)) != ESP_OK) {
+        ESP_LOGE(TAG, "%s failed to set power limits: %s\n", __func__, esp_err_to_name(ret));
+        return;
+    }
+
     if ((ret = esp_bluedroid_init()) != ESP_OK) {
         ESP_LOGE(TAG, "%s initialize bluedroid failed: %s\n", __func__, esp_err_to_name(ret));
         return;

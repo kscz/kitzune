@@ -149,17 +149,23 @@ static esp_err_t playpause_playlist(void) {
     switch (el_state) {
         case AEL_STATE_INIT :
             ESP_LOGI(TAG, "Starting audio pipeline");
-            periph_bt_play(s_bt_periph);
+            if (s_hp_is_bt) {
+                periph_bt_play(s_bt_periph);
+            }
             audio_pipeline_run(s_pipeline);
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
             audio_pipeline_pause(s_pipeline);
-            periph_bt_pause(s_bt_periph);
+            if (s_hp_is_bt) {
+                periph_bt_pause(s_bt_periph);
+            }
             break;
         case AEL_STATE_PAUSED :
             ESP_LOGI(TAG, "Resuming audio pipeline");
-            periph_bt_play(s_bt_periph);
+            if (s_hp_is_bt) {
+                periph_bt_play(s_bt_periph);
+            }
             audio_pipeline_resume(s_pipeline);
             break;
         default :
@@ -230,7 +236,9 @@ bool player_get_shuffle(void) {
 
 static void configure_and_run_playlist(const char *url) {
     audio_pipeline_stop(s_pipeline);
-    periph_bt_stop(s_bt_periph);
+    if (s_hp_is_bt) {
+        periph_bt_stop(s_bt_periph);
+    }
     audio_pipeline_wait_for_stop(s_pipeline);
 
     audio_extension_e ext = AUD_EXT_UNKNOWN;
@@ -262,7 +270,9 @@ static void configure_and_run_playlist(const char *url) {
         }
         audio_pipeline_set_listener(s_pipeline, s_evt);
     }
-    periph_bt_play(s_bt_periph);
+    if (s_hp_is_bt) {
+        periph_bt_play(s_bt_periph);
+    }
     audio_pipeline_run(s_pipeline);
 }
 
