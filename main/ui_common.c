@@ -76,7 +76,7 @@ lv_obj_t *ui_create_top_bar(lv_obj_t *screen) {
     ui_set_top_bar(top_bar);
     lvgl_port_lock(0);
     lv_obj_add_style(top_bar, &s_style_small, 0);
-    lv_obj_set_width(top_bar, s_disp->driver->hor_res);
+    lv_obj_set_width(top_bar, LV_HOR_RES);
     lv_obj_set_style_text_color(top_bar, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(top_bar, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(top_bar, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);

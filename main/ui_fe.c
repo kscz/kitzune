@@ -1,4 +1,4 @@
-#include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <dirent.h>
 
@@ -42,7 +42,6 @@ static size_t s_fe_list_count = 0;
 static strstack_handle_t s_curpath = NULL;
 
 static size_t s_hl_line = 0;
-static lv_coord_t s_hor_res, s_ver_res;
 
 // De-highlight the currently highlighted line and disable circular scroll
 // Then highlight the new line and enable circular scroll
@@ -161,8 +160,6 @@ esp_err_t ui_fe_init(void) {
     }
     s_curpath = strstack_new();
 
-    s_hor_res = disp->driver->hor_res;
-    s_ver_res = disp->driver->ver_res;
     s_screen = lv_obj_create(NULL);
 
     // Create a status bar
@@ -171,8 +168,8 @@ esp_err_t ui_fe_init(void) {
     // Create a file explorer section
     lvgl_port_lock(0);
     s_fe_menu = lv_list_create(s_screen);
-    lv_obj_set_width(s_fe_menu, s_hor_res);
-    lv_obj_set_height(s_fe_menu, s_ver_res - 12);
+    lv_obj_set_width(s_fe_menu, LV_HOR_RES);
+    lv_obj_set_height(s_fe_menu, LV_VER_RES - 12);
     lv_obj_align(s_fe_menu, LV_ALIGN_TOP_MID, 0, 12);
     lvgl_port_unlock();
     create_dir_list("/sdcard");

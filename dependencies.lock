@@ -1,33 +1,66 @@
 dependencies:
-  espressif/esp_lvgl_port:
-    component_hash: b43dc04720d126cbfe14d53a84787e4c24b7bd7f15468e224c930ad3ffb32258
+  espressif/esp-dsp:
+    component_hash: 3e7bbd487f1357a1d4944d0c85966d049501ea281b8a4c7f93f7cfedd5b7f23d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com/
       type: service
-    version: 1.4.0
+    version: 1.4.12
+  espressif/esp_lvgl_port:
+    component_hash: 8bcec6b1144750343ce7e411a7a1057a75a6348d3edc137bd5792ccba7f6c270
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com/
+      require: public
+      version: '>=8,<10'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.3.2
   espressif/jsmn:
     component_hash: d80350c41bbaa827c98a25b6072df00884e72f54885996fab4a4f0aebce6b6c3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.0
   espressif/nghttp:
     component_hash: c52b83cc3d1083ae669751534ea4f7445974b86d91d49a5273bdb0fbf87f34d6
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.62.1
   idf:
-    component_hash: null
     source:
       type: idf
-    version: 5.1.4
+    version: 5.3.1
   lvgl/lvgl:
-    component_hash: 948bff879a345149b83065535bbc4a026ce9f47498a22881e432a264b9098015
+    component_hash: d7c1ac037ae6e85d94897f807d6e7ba0946a83e720074fc95a4f6241da9f9f53
+    dependencies: []
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com/
       type: service
-    version: 8.3.11
-manifest_hash: ddc94717ad1ac84e1e0031f2cd9d0f837442b249bbbfeb1e877c31dc71f3d5c7
+    version: 8.4.0
+direct_dependencies:
+- espressif/esp-dsp
+- espressif/esp_lvgl_port
+- espressif/jsmn
+- espressif/nghttp
+- idf
+- lvgl/lvgl
+manifest_hash: 7f43a0a8070c370fc67b1180686692ebfadbc2286f4f5b0ba5d235aa214567ba
 target: esp32
-version: 1.0.0
+version: 2.0.0

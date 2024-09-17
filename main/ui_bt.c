@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -65,7 +67,7 @@ esp_err_t ui_bt_init(void) {
     lvgl_port_lock(0);
     s_bt_menu = lv_label_create(s_screen);
     lv_label_set_text(s_bt_menu, "Start discovery by pressing the center button!");
-    lv_obj_set_width(s_bt_menu, disp->driver->hor_res);
+    lv_obj_set_width(s_bt_menu, LV_HOR_RES);
     lv_obj_align(s_bt_menu, LV_ALIGN_TOP_MID, 0, 12);
     lvgl_port_unlock();
 
@@ -78,7 +80,7 @@ static void ui_bt_discovery_complete(bt_dev_info_t *dev, size_t dev_count) {
     lvgl_port_lock(0);
     lv_obj_del(s_bt_menu);
     s_bt_menu = lv_list_create(s_screen);
-    lv_obj_set_width(s_bt_menu, disp->driver->hor_res);
+    lv_obj_set_width(s_bt_menu, LV_HOR_RES);
     lv_obj_align(s_bt_menu, LV_ALIGN_TOP_MID, 0, 12);
 
     s_bt_list_count = 0;
@@ -117,7 +119,7 @@ disp_state_t ui_bt_handle_input(periph_service_handle_t handle, periph_service_e
                             lv_obj_del(s_bt_menu);
                             s_bt_menu = lv_label_create(s_screen);
                             lv_label_set_text(s_bt_menu, "Discovering...");
-                            lv_obj_set_width(s_bt_menu, ui_get_display()->driver->hor_res);
+                            lv_obj_set_width(s_bt_menu, LV_HOR_RES);
                             lv_obj_align(s_bt_menu, LV_ALIGN_TOP_MID, 0, 12);
                             lvgl_port_unlock();
                             s_state = UIBT_DISCOVERING;

@@ -56,7 +56,7 @@ esp_err_t ui_mm_init(void) {
     s_menu_bar = lv_label_create(s_mm_screen);
     lv_label_set_text(s_menu_bar, LV_SYMBOL_HOME " " LV_SYMBOL_LIST "  " LV_SYMBOL_DIRECTORY "  " LV_SYMBOL_CALL "\n" LV_SYMBOL_EDIT " " LV_SYMBOL_DOWNLOAD "   " LV_SYMBOL_BLUETOOTH "  " LV_SYMBOL_SETTINGS);
     ui_add_style_big(s_menu_bar);
-    lv_obj_set_width(s_menu_bar, disp->driver->hor_res);
+    lv_obj_set_width(s_menu_bar, LV_HOR_RES);
     lv_obj_set_style_text_color(s_menu_bar, lv_color_white(), LV_PART_SELECTED | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(s_menu_bar, lv_color_black(), LV_PART_SELECTED | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(s_menu_bar, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_DEFAULT);

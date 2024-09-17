@@ -216,7 +216,6 @@ void player_main(void) {
 
     // Initialize the I2S stream
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
-    i2s_cfg.i2s_config.sample_rate = 48000; // Just set it to an easy default
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     s_hp_stream = i2s_stream_init(&i2s_cfg);
 

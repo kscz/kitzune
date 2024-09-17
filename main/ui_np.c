@@ -49,10 +49,10 @@ esp_err_t ui_np_init(void) {
     s_title_bar = lv_label_create(s_screen);
     lv_label_set_text(s_title_bar, "Play a song! Like maybe... ring ring ring ring ring ring ring banana phoooooone!");
     lv_label_set_long_mode(s_title_bar, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
-    lv_obj_set_width(s_title_bar, disp->driver->hor_res);
+    lv_obj_set_width(s_title_bar, LV_HOR_RES);
     lv_obj_align(s_title_bar, LV_ALIGN_TOP_MID, 0, 12);
     s_shuffle_bar = lv_label_create(s_screen);
-    lv_obj_set_width(s_shuffle_bar, disp->driver->hor_res);
+    lv_obj_set_width(s_shuffle_bar, LV_HOR_RES);
     lv_label_set_text(s_shuffle_bar, LV_SYMBOL_SHUFFLE);
     lv_obj_align(s_shuffle_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
     lvgl_port_unlock();
