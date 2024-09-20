@@ -1,5 +1,6 @@
 
 lv_obj_t *ui_np_get_screen(void);
+lv_obj_t *ui_np_get_top_bar(void);
 esp_err_t ui_np_init(void);
 
 void ui_np_set_song_title(const char *title);

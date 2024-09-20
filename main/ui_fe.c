@@ -183,6 +183,10 @@ lv_obj_t *ui_fe_get_screen(void) {
     return s_screen;
 }
 
+lv_obj_t *ui_fe_get_top_bar(void) {
+    return s_top_bar;
+}
+
 // Create a playlist for a directory
 static void generate_directory_playlist(playlist_operator_handle_t pl, dynstr_handle_t curpath) {
     DIR *dp = NULL;

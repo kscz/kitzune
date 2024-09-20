@@ -32,6 +32,10 @@ lv_obj_t *ui_np_get_screen(void) {
     return s_screen;
 }
 
+lv_obj_t *ui_np_get_top_bar(void) {
+    return s_top_bar;
+}
+
 esp_err_t ui_np_init(void) {
     lv_disp_t *disp = ui_get_display();
     if (disp == NULL) {

@@ -111,6 +111,10 @@ lv_obj_t *ui_bt_get_screen(void) {
     return s_screen;
 }
 
+lv_obj_t *ui_bt_get_top_bar(void) {
+    return s_top_bar;
+}
+
 disp_state_t ui_bt_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle) {
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
         switch ((int)evt->data) {

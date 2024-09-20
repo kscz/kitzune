@@ -30,6 +30,10 @@ lv_obj_t *ui_mm_get_screen(void) {
     return s_mm_screen;
 }
 
+lv_obj_t *ui_mm_get_top_bar(void) {
+    return s_top_bar;
+}
+
 static void ui_mm_sel_pos(uint8_t pos) {
     lvgl_port_lock(0);
     lv_label_set_text_sel_start(s_menu_bar, LV_LABEL_TEXT_SELECTION_OFF);

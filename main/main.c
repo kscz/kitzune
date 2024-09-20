@@ -54,6 +54,36 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait);
 static disp_state_t s_cur_disp_state = DS_MAIN_MENU;
 static disp_state_t s_prev_disp_state = DS_MAIN_MENU;
 
+static void update_top_bar(void)
+{
+    lv_obj_t* cur_top_bar = NULL;
+    switch(s_cur_disp_state) {
+        case DS_NOW_PLAYING:
+            cur_top_bar = ui_np_get_top_bar();
+            break;
+        case DS_BLUETOOTH:
+            cur_top_bar = ui_bt_get_top_bar();
+            break;
+        case DS_FILE_EXP:
+            cur_top_bar = ui_fe_get_top_bar();
+            break;
+        case DS_SETTINGS:
+            cur_top_bar = ui_settings_get_top_bar();
+            break;
+        case DS_MAIN_MENU:
+            cur_top_bar = ui_mm_get_top_bar();
+            break;
+        default:
+            break;
+    }
+    if (cur_top_bar == NULL) {
+        ESP_LOGE(TAG, "Failed to update top bar");
+        return;
+    }
+
+    ui_set_top_bar(cur_top_bar);
+}
+
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)
 {
     /* Handle touch pad events
@@ -124,6 +154,8 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         lvgl_port_unlock();
     }
 
+    update_top_bar();
+
     return ESP_OK;
 }
 
@@ -157,10 +189,6 @@ void app_main(void)
 
     bt_be_init();
 
-    // launch player_backend task!
-    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 5, NULL, APP_CPU_NUM);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
     ESP_LOGI(TAG, "[ 2 ] Start codec chip");
     audio_board_handle_t board_handle = audio_board_init();
     audio_hal_ctrl_codec(board_handle->audio_hal, AUDIO_HAL_CODEC_MODE_DECODE, AUDIO_HAL_CTRL_START);
@@ -184,7 +212,7 @@ void app_main(void)
 
     // launch player_backend task!
     player_be_init(bt_periph);
-    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 1, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 5, NULL, APP_CPU_NUM);
     vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "Install panel IO");
@@ -250,7 +278,8 @@ void app_main(void)
             ESP_LOGE(TAG, "Oh Noooooo: %d", ret);
         }
 #endif
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
+        update_top_bar();
     }
 }
 

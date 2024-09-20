@@ -96,6 +96,13 @@ void player_be_volume_up(audio_board_handle_t board_handle) {
         if (player_volume > 100) {
             player_volume = 100;
         }
+
+        if (player_volume < 70) {
+            ui_set_volume(1);
+        } else {
+            ui_set_volume(2);
+        }
+
         audio_hal_set_volume(board_handle->audio_hal, player_volume);
         ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
     } else {
@@ -111,6 +118,15 @@ void player_be_volume_down(audio_board_handle_t board_handle) {
         if (player_volume < 0) {
             player_volume = 0;
         }
+
+        if (player_volume == 0) {
+            ui_set_volume(0);
+        } else if (player_volume < 70) {
+            ui_set_volume(1);
+        } else {
+            ui_set_volume(2);
+        }
+
         audio_hal_set_volume(board_handle->audio_hal, player_volume);
         ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
     } else {
@@ -149,6 +165,7 @@ static esp_err_t playpause_playlist(void) {
     switch (el_state) {
         case AEL_STATE_INIT :
             ESP_LOGI(TAG, "Starting audio pipeline");
+            ui_set_play(true);
             if (s_hp_is_bt) {
                 periph_bt_play(s_bt_periph);
             }
@@ -156,6 +173,7 @@ static esp_err_t playpause_playlist(void) {
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
+            ui_set_play(false);
             audio_pipeline_pause(s_pipeline);
             if (s_hp_is_bt) {
                 periph_bt_pause(s_bt_periph);
@@ -163,6 +181,7 @@ static esp_err_t playpause_playlist(void) {
             break;
         case AEL_STATE_PAUSED :
             ESP_LOGI(TAG, "Resuming audio pipeline");
+            ui_set_play(true);
             if (s_hp_is_bt) {
                 periph_bt_play(s_bt_periph);
             }
@@ -274,6 +293,7 @@ static void configure_and_run_playlist(const char *url) {
         periph_bt_play(s_bt_periph);
     }
     audio_pipeline_run(s_pipeline);
+    ui_set_play(true);
 }
 
 static void advance_playlist() {
