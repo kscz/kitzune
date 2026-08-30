@@ -33,7 +33,9 @@
 #include "board.h"
 
 #include "a2dp_stream.h"
+#include "esp_avrc_api.h"
 
+#include "bt_be.h"
 #include "kz_util.h"
 #include "lvgl.h"
 #include "ui_common.h"
@@ -47,6 +49,8 @@ typedef enum {
     PLAYER_BE_PLAYPAUSE_MSG,
     PLAYER_BE_NEXT_MSG,
     PLAYER_BE_BT_HEADPHONES_MSG,
+    PLAYER_BE_BT_DISCONNECT_MSG,
+    PLAYER_BE_BT_DISABLE_MSG,
 } player_be_msg_type;
 
 typedef struct {
@@ -84,8 +88,79 @@ static bool s_playmode_is_shuffle = true;
 static bool s_hp_is_bt = false, s_hp_is_bt_desired = false;
 static esp_periph_handle_t s_bt_periph;
 
+// A2DP renders at the sink, so absolute volume is the only volume we have.
+// Written from the BTC task as well as from whoever presses a key.
+#define BT_VOLUME_STEP 5
+static int s_bt_volume = 50;
+static bool s_bt_vol_registered = false;
+static bool s_bt_avrc_tg_connected = false;
+
 void player_be_init(esp_periph_handle_t bt_periph) {
     s_bt_periph = bt_periph;
+}
+
+static uint8_t bt_volume_to_avrc(int volume) {
+    return (uint8_t)((volume * 127) / 100);
+}
+
+static void bt_set_volume(int volume) {
+    if (volume > 100) {
+        volume = 100;
+    } else if (volume < 0) {
+        volume = 0;
+    }
+    s_bt_volume = volume;
+
+    if (!s_bt_vol_registered) {
+        ESP_LOGW(TAG, "[ * ] Sink hasn't registered for volume changes");
+        return;
+    }
+
+    // The response consumes the registration; the sink has to ask again
+    s_bt_vol_registered = false;
+
+    esp_avrc_rn_param_t rn_param = { .volume = bt_volume_to_avrc(volume) };
+    esp_err_t ret = esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE,
+                                            ESP_AVRC_RN_RSP_CHANGED, &rn_param);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "[ * ] Unable to notify the sink: %s", esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI(TAG, "[ * ] BT volume set to %d %%", volume);
+}
+
+// a2dp_stream_init() installs its own handler, which reports the pre-change
+// volume and answers whether or not the sink registered. We replace it.
+static void player_avrc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param) {
+    switch (event) {
+        case ESP_AVRC_TG_CONNECTION_STATE_EVT:
+            ESP_LOGI(TAG, "AVRC TG connection state: %d", param->conn_stat.connected);
+            s_bt_avrc_tg_connected = param->conn_stat.connected;
+            if (!param->conn_stat.connected) {
+                s_bt_vol_registered = false;
+            }
+            break;
+        case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT:
+            s_bt_volume = (param->set_abs_vol.volume * 100) / 127;
+            ESP_LOGI(TAG, "AVRC volume set by the sink to %d %%", s_bt_volume);
+            break;
+        case ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT:
+            ESP_LOGI(TAG, "AVRC register notification: event %d", param->reg_ntf.event_id);
+            if (param->reg_ntf.event_id == ESP_AVRC_RN_VOLUME_CHANGE) {
+                s_bt_vol_registered = true;
+                esp_avrc_rn_param_t rn_param = { .volume = bt_volume_to_avrc(s_bt_volume) };
+                esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE,
+                                        ESP_AVRC_RN_RSP_INTERIM, &rn_param);
+            }
+            break;
+        case ESP_AVRC_TG_REMOTE_FEATURES_EVT:
+            ESP_LOGI(TAG, "AVRC TG remote features %x, CT features %x",
+                     (unsigned int)param->rmt_feats.feat_mask,
+                     (unsigned int)param->rmt_feats.ct_feat_flag);
+            break;
+        default:
+            break;
+    }
 }
 
 void player_be_volume_up(audio_board_handle_t board_handle) {
@@ -98,7 +173,10 @@ void player_be_volume_up(audio_board_handle_t board_handle) {
         }
         audio_hal_set_volume(board_handle->audio_hal, player_volume);
         ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+    } else if (s_bt_avrc_tg_connected) {
+        bt_set_volume(s_bt_volume + BT_VOLUME_STEP);
     } else {
+        // Sinks that drive volume themselves take the passthrough instead
         periph_bt_volume_up(s_bt_periph);
     }
 }
@@ -113,6 +191,8 @@ void player_be_volume_down(audio_board_handle_t board_handle) {
         }
         audio_hal_set_volume(board_handle->audio_hal, player_volume);
         ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
+    } else if (s_bt_avrc_tg_connected) {
+        bt_set_volume(s_bt_volume - BT_VOLUME_STEP);
     } else {
         periph_bt_volume_down(s_bt_periph);
     }
@@ -135,10 +215,33 @@ esp_err_t player_playpause(void) {
     return ESP_OK;
 }
 
+// False until a2dp_stream_init() has run: esp_a2d_source_connect() asserts
+bool player_be_bt_ready(void) {
+    return (s_bt_hp_stream != NULL);
+}
+
 esp_err_t player_be_set_bt_hp(void) {
+    if (s_bt_hp_stream == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     player_be_msg_u msg;
     msg.type = PLAYER_BE_BT_HEADPHONES_MSG;
     xQueueSendToBack(s_player_be_queue, &msg, 0);
+    xTaskAbortDelay(s_task);
+    return ESP_OK;
+}
+
+esp_err_t player_be_disable_bt(void) {
+    if (s_bt_hp_stream == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    player_be_msg_u msg;
+    msg.type = PLAYER_BE_BT_DISABLE_MSG;
+    if (pdPASS != xQueueSendToBack(s_player_be_queue, &msg, 0)) {
+        return ESP_FAIL;
+    }
     xTaskAbortDelay(s_task);
     return ESP_OK;
 }
@@ -276,6 +379,41 @@ static void configure_and_run_playlist(const char *url) {
     audio_pipeline_run(s_pipeline);
 }
 
+// Runs on the player task: the pipeline and the a2dp element are ours, so a
+// teardown from any other task races with playback.
+static void disable_bt(void) {
+    if (s_bt_hp_stream == NULL) {
+        return;
+    }
+
+    // Move the output back to the codec so nothing feeds "bt" any more
+    s_hp_is_bt_desired = false;
+    if (s_hp_is_bt) {
+        configure_and_run_playlist(NULL);
+    }
+
+    audio_pipeline_unregister(s_pipeline, s_bt_hp_stream);
+    audio_element_deinit(s_bt_hp_stream);
+    s_bt_hp_stream = NULL;
+
+    // Stays in the periph set, but stop it and drop our handle so no later
+    // transport/volume call reaches the dead stack
+    if (s_bt_periph != NULL) {
+        esp_periph_stop(s_bt_periph);
+        s_bt_periph = NULL;
+    }
+
+    s_bt_avrc_tg_connected = false;
+    s_bt_vol_registered = false;
+
+    // a2dp_stream_init() brought up a2dp plus both avrc roles
+    a2dp_destroy();
+    esp_avrc_tg_deinit();
+    esp_avrc_ct_deinit();
+
+    bt_be_deinit();
+}
+
 static void advance_playlist() {
     char *url = NULL;
     if (s_playmode_is_shuffle) {
@@ -290,7 +428,15 @@ static void advance_playlist() {
 static void player_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
     switch(event) {
         case ESP_A2D_CONNECTION_STATE_EVT:
-            ESP_LOGI(TAG, "CONNECTION_STATE_EVT");
+            ESP_LOGI(TAG, "CONNECTION_STATE_EVT: state %d", param->conn_stat.state);
+            // Covers a failed connect too: the pipeline is switched over as
+            // soon as the device is picked, before the link is up
+            if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
+                player_be_msg_u msg;
+                msg.type = PLAYER_BE_BT_DISCONNECT_MSG;
+                xQueueSendToBack(s_player_be_queue, &msg, 0);
+                xTaskAbortDelay(s_task);
+            }
             break;
         case ESP_A2D_AUDIO_STATE_EVT:
             ESP_LOGI(TAG, "AUDIO_STATE_EVT");
@@ -301,6 +447,12 @@ static void player_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
         case ESP_A2D_MEDIA_CTRL_ACK_EVT:
             ESP_LOGI(TAG, "MEDIA_CTRL_ACK_EVT");
             if (param->media_ctrl_stat.cmd == ESP_A2D_MEDIA_CTRL_CHECK_SRC_RDY && param->media_ctrl_stat.status == ESP_A2D_MEDIA_CTRL_ACK_SUCCESS) {
+                // Nothing feeds "bt" until it's linked, and starting anyway
+                // just underflows the sink. periph_bt_play() re-checks later.
+                if (s_bt_hp_stream == NULL || audio_element_get_input_ringbuf(s_bt_hp_stream) == NULL) {
+                    ESP_LOGI(TAG, "a2dp media ready, but nothing to send yet");
+                    break;
+                }
                 ESP_LOGI(TAG, "a2dp media ready, starting ...");
                 esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_START);
             } else if (param->media_ctrl_stat.cmd == ESP_A2D_MEDIA_CTRL_START && param->media_ctrl_stat.status == ESP_A2D_MEDIA_CTRL_ACK_SUCCESS) {
@@ -347,28 +499,8 @@ void player_main(void) {
     fatfs_cfg.type = AUDIO_STREAM_READER;
     s_fs_stream = fatfs_stream_init(&fatfs_cfg);
 
-    // Loop until we get a valid playlist
     player_be_msg_u be_msg;
-    while (s_playlist == NULL) {
-        xQueueReceive(s_player_be_queue, &be_msg, portMAX_DELAY);
-        if (be_msg.type == PLAYER_BE_PLAYLIST_MSG) {
-            s_playlist = be_msg.pl_msg.pl_op;
-        }
-    }
-    // Now that we have a valid playlist, setup our associated data
-    s_playlist->get_operation(&s_pl_oper);
-    s_playlist_len = (uint32_t)s_pl_oper.get_url_num(s_playlist);
-
-    // set the fatfs stream to point at the start
     char *url = NULL;
-    if (s_playmode_is_shuffle) {
-        uint32_t next_song = esp_random() % s_playlist_len;
-        s_pl_oper.choose(s_playlist, next_song, &url);
-    } else {
-        s_pl_oper.current(s_playlist, &url);
-    }
-    ui_np_set_song_title(url + 14);
-    audio_element_set_uri(s_fs_stream, url);
 
     mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
     mp3_cfg.out_rb_size = PLAYER_DECODER_OUT_BUF_SIZE;
@@ -400,8 +532,6 @@ void player_main(void) {
     aac_cfg.stack_in_ext = PLAYER_DECODE_IN_PSRAM;
     s_aac_stream  = aac_decoder_init(&aac_cfg);
 
-    set_decoder_info(kz_get_ext(url));
-
     rsp_filter_cfg_t rsp_cfg = DEFAULT_RESAMPLE_FILTER_CONFIG();
     rsp_cfg.src_rate = 48000;
     rsp_cfg.src_ch = 2;
@@ -420,6 +550,9 @@ void player_main(void) {
     };
     s_bt_hp_stream = a2dp_stream_init(&a2dp_config);
 
+    // Must follow a2dp_stream_init(): it registers a handler of its own
+    esp_avrc_tg_register_callback(player_avrc_tg_cb);
+
     // at this point we should have everything we need to start playing!
     // build up the pipeline!
     audio_pipeline_register(s_pipeline, s_fs_stream, "fs");
@@ -430,18 +563,47 @@ void player_main(void) {
     audio_pipeline_register(s_pipeline, s_wav_stream, "wav");
     audio_pipeline_register(s_pipeline, s_aac_stream, "aac");
     audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
-    audio_pipeline_register(s_pipeline, s_hp_stream, "hp");
     audio_pipeline_register(s_pipeline, s_resampler, "rsp");
     audio_pipeline_register(s_pipeline, s_bt_hp_stream, "bt");
 
-    // Actvate the bluetooth stream so we can pair
-    audio_element_run(s_bt_hp_stream);
-
-    const char *link_tag[] = {"fs", s_current_ext_str, "hp"};
-    audio_pipeline_link(s_pipeline, &link_tag[0], 3);
-
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     s_evt = audio_event_iface_init(&evt_cfg);
+
+    // Only the link needs a song: it's named after the decoder
+    while (s_playlist == NULL) {
+        xQueueReceive(s_player_be_queue, &be_msg, portMAX_DELAY);
+        if (be_msg.type == PLAYER_BE_PLAYLIST_MSG) {
+            s_playlist = be_msg.pl_msg.pl_op;
+        } else if (be_msg.type == PLAYER_BE_BT_HEADPHONES_MSG) {
+            s_hp_is_bt_desired = true;
+        } else if (be_msg.type == PLAYER_BE_BT_DISCONNECT_MSG) {
+            s_hp_is_bt_desired = false;
+        } else if (be_msg.type == PLAYER_BE_BT_DISABLE_MSG) {
+            disable_bt();
+        }
+    }
+
+    // Now that we have a valid playlist, setup our associated data
+    s_playlist->get_operation(&s_pl_oper);
+    s_playlist_len = (uint32_t)s_pl_oper.get_url_num(s_playlist);
+
+    // set the fatfs stream to point at the start
+    if (s_playmode_is_shuffle) {
+        uint32_t next_song = esp_random() % s_playlist_len;
+        s_pl_oper.choose(s_playlist, next_song, &url);
+    } else {
+        s_pl_oper.current(s_playlist, &url);
+    }
+    ui_np_set_song_title(url + 14);
+    audio_element_set_uri(s_fs_stream, url);
+    set_decoder_info(kz_get_ext(url));
+
+    s_hp_is_bt = s_hp_is_bt_desired;
+    if (s_hp_is_bt) {
+        audio_pipeline_link(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "rsp", "bt"}, 4);
+    } else {
+        audio_pipeline_link(s_pipeline, (const char *[]) {"fs", s_current_ext_str, "hp"}, 3);
+    }
 
     audio_pipeline_set_listener(s_pipeline, s_evt);
 
@@ -467,8 +629,20 @@ void player_main(void) {
                 }
                 configure_and_run_playlist(url);
             } else if (be_msg.type == PLAYER_BE_BT_HEADPHONES_MSG) {
-                s_hp_is_bt_desired = true;
-                configure_and_run_playlist(NULL);
+                if (s_bt_hp_stream == NULL) {
+                    ESP_LOGW(TAG, "Bluetooth is disabled, ignoring");
+                } else {
+                    s_hp_is_bt_desired = true;
+                    configure_and_run_playlist(NULL);
+                }
+            } else if (be_msg.type == PLAYER_BE_BT_DISCONNECT_MSG) {
+                if (s_hp_is_bt) {
+                    ESP_LOGI(TAG, "Bluetooth dropped, back to the jack");
+                    s_hp_is_bt_desired = false;
+                    configure_and_run_playlist(NULL);
+                }
+            } else if (be_msg.type == PLAYER_BE_BT_DISABLE_MSG) {
+                disable_bt();
             }
         }
         if (ESP_OK != audio_event_iface_listen(s_evt, &msg, pdMS_TO_TICKS(1000))) {

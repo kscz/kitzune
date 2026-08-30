@@ -34,6 +34,8 @@
 
 #include "lvgl.h"
 #include "bt_be.h"
+#include "max9867.h"
+#include "mono_disp.h"
 #include "player_be.h"
 #include "ui_common.h"
 #include "ui_mm.h"
@@ -51,15 +53,109 @@ static const char *TAG = "MAIN";
 static esp_err_t print_real_time_stats(TickType_t xTicksToWait);
 #endif
 
+#define DISP_SLEEP_MS 15000
+
+#define BTN_POLL_MS 100
+
+/* Cap on how long a wake keypress can eat the input, in case its release event
+   never lands */
+#define DISP_WAKE_EAT_MS 3000
+
 static disp_state_t s_cur_disp_state = DS_MAIN_MENU;
 static disp_state_t s_prev_disp_state = DS_MAIN_MENU;
 
+#define SSD1306_CMD_SET_CHARGE_PUMP 0x8D
+
+static esp_lcd_panel_handle_t s_panel = NULL;
+static esp_lcd_panel_io_handle_t s_panel_io = NULL;
+static volatile TickType_t s_last_input_tick = 0;
+static bool s_disp_is_on = true;
+static int s_wake_key = -1;
+static TickType_t s_wake_tick = 0;
+
+static bool is_release_action(int type)
+{
+    return type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE ||
+           type == INPUT_KEY_SERVICE_ACTION_PRESS_RELEASE;
+}
+
+// Disable the charge pump
+static esp_err_t disp_charge_pump(bool on)
+{
+    return esp_lcd_panel_io_tx_param(s_panel_io, SSD1306_CMD_SET_CHARGE_PUMP,
+                                     (uint8_t[]) { on ? 0x14 : 0x10 }, 1);
+}
+
+// Blank the panel and stop LVGL's timers so nothing redraws while asleep
+static void disp_sleep(void)
+{
+    lvgl_port_lock(0);
+    if (s_disp_is_on) {
+        lvgl_port_stop();
+        if (ESP_OK == esp_lcd_panel_disp_on_off(s_panel, false)) {
+            s_disp_is_on = false;
+            if (ESP_OK != disp_charge_pump(false)) {
+                ESP_LOGW(TAG, "Unable to stop the panel charge pump");
+            }
+        } else {
+            ESP_LOGW(TAG, "Unable to blank the panel");
+            lvgl_port_resume();
+        }
+    }
+    lvgl_port_unlock();
+}
+
+// Returns true if this call wakes the panel
+static bool disp_wake(void)
+{
+    bool wake = false;
+
+    lvgl_port_lock(0);
+    if (!s_disp_is_on) {
+        if (ESP_OK != disp_charge_pump(true)) {
+            ESP_LOGW(TAG, "Unable to start the panel charge pump");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Wait for charge pump to re-charge
+
+        // On failure leave the display asleep
+        if (ESP_OK == esp_lcd_panel_disp_on_off(s_panel, true)) {
+            lvgl_port_resume();
+            s_disp_is_on = true;
+            wake = true;
+        } else {
+            ESP_LOGW(TAG, "Unable to wake the panel");
+        }
+    }
+    lvgl_port_unlock();
+
+    return wake;
+}
+
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)
 {
-    /* Handle touch pad events
-           to start, pause, resume, finish current song and adjust volume
-        */
+    // Handle touch pad events to start, pause, resume, finish current song and adjust volume
     audio_board_handle_t board_handle = (audio_board_handle_t) ctx;
+
+    s_last_input_tick = xTaskGetTickCount();
+
+    if (disp_wake()) {
+        // Eat the rest of this press so waking doesn't also act on it
+        s_wake_key = is_release_action(evt->type) ? -1 : (int)evt->data;
+        s_wake_tick = s_last_input_tick;
+        return ESP_OK;
+    }
+
+    if (s_wake_key >= 0) {
+        if ((s_last_input_tick - s_wake_tick) > pdMS_TO_TICKS(DISP_WAKE_EAT_MS)) {
+            s_wake_key = -1;
+        } else {
+            if ((int)evt->data == s_wake_key && is_release_action(evt->type)) {
+                s_wake_key = -1;
+            }
+            return ESP_OK;
+        }
+    }
 
     disp_state_t next_state = DS_NO_CHANGE;
     if (evt->type == INPUT_KEY_SERVICE_ACTION_PRESS) {
@@ -102,6 +198,10 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         s_prev_disp_state = s_cur_disp_state;
         s_cur_disp_state = next_state;
 
+        if (s_cur_disp_state == DS_BLUETOOTH) {
+            ui_bt_enter();
+        }
+
         lvgl_port_lock(0);
         switch(s_cur_disp_state) {
             case DS_NOW_PLAYING:
@@ -129,7 +229,7 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
 
 void app_main(void)
 {
-    /* Initialize NVS — it is used to store PHY calibration data and save key-value pairs in flash memory*/
+    /* Initialize NVS — it is used to store PHY calibration data and save key-value pairs in flash memory */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -155,12 +255,6 @@ void app_main(void)
     audio_board_key_init(set);
     audio_board_sdcard_init(set, SD_MODE_4_LINE);
 
-    bt_be_init();
-
-    // launch player_backend task!
-    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 5, NULL, APP_CPU_NUM);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
     ESP_LOGI(TAG, "[ 2 ] Start codec chip");
     audio_board_handle_t board_handle = audio_board_init();
     audio_hal_ctrl_codec(board_handle->audio_hal, AUDIO_HAL_CODEC_MODE_DECODE, AUDIO_HAL_CTRL_START);
@@ -182,9 +276,13 @@ void app_main(void)
     ESP_LOGI(TAG, "[3.8] Start bt peripheral");
     esp_periph_start(set, bt_periph);
 
-    // launch player_backend task!
+    bt_be_init();
+
+    // launch player task!
     player_be_init(bt_periph);
-    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 1, NULL, APP_CPU_NUM);
+    xTaskCreatePinnedToCore(player_main, "PLAYER", (8*1024), NULL, 5, NULL, APP_CPU_NUM);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "Install panel IO");
@@ -209,31 +307,20 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+    s_panel = panel_handle;
+    s_panel_io = io_handle;
 
     ESP_LOGI(TAG, "Initialize LVGL");
     const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     lvgl_port_init(&lvgl_cfg);
 
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle = io_handle,
-        .panel_handle = panel_handle,
-        .buffer_size = SSD1306_H_RES * SSD1306_V_RES,
-        .double_buffer = true,
-        .hres = SSD1306_H_RES,
-        .vres = SSD1306_V_RES,
-        .monochrome = true,
-        .rotation = {
-            .swap_xy = false,
-            .mirror_x = false,
-            .mirror_y = false,
-        }
-    };
     lvgl_port_lock(0);
-    lv_disp_t * disp = lvgl_port_add_disp(&disp_cfg);
-
-    /* Rotation of the screen */
-    lv_disp_set_rotation(disp, LV_DISP_ROT_NONE);
+    lv_disp_t * disp = mono_disp_add(panel_handle, SSD1306_H_RES, SSD1306_V_RES);
     lvgl_port_unlock();
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "Unable to register the display!");
+        return;
+    }
 
     ui_common_init(disp);
     ui_mm_init();
@@ -242,15 +329,49 @@ void app_main(void)
     ui_fe_init();
     ui_settings_init();
 
-    while(1) {
+    s_last_input_tick = xTaskGetTickCount();
+
 #if configUSE_TRACE_FACILITY != 0
-        heap_caps_print_heap_info(MALLOC_CAP_8BIT);
-        esp_err_t ret = print_real_time_stats(100);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Oh Noooooo: %d", ret);
+    int stats_tick = 0;
+#endif
+
+    while(1) {
+        // These don't wake the screen up
+        max9867_ctrl_t ctrl = MAX9867_CTRL_NONE;
+        if (ESP_OK == max9867_poll_inline_controls(&ctrl)) {
+            switch (ctrl) {
+                case MAX9867_CTRL_CENTER:
+                    ESP_LOGI(TAG, "In-line center");
+                    player_playpause();
+                    break;
+                case MAX9867_CTRL_VOL_UP:
+                    ESP_LOGI(TAG, "In-line volume up");
+                    player_be_volume_up(board_handle);
+                    break;
+                case MAX9867_CTRL_VOL_DOWN:
+                    ESP_LOGI(TAG, "In-line volume down");
+                    player_be_volume_down(board_handle);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if ((xTaskGetTickCount() - s_last_input_tick) >= pdMS_TO_TICKS(DISP_SLEEP_MS)) {
+            disp_sleep();
+        }
+
+#if configUSE_TRACE_FACILITY != 0
+        if (++stats_tick >= (1000 / BTN_POLL_MS)) {
+            stats_tick = 0;
+            heap_caps_print_heap_info(MALLOC_CAP_8BIT);
+            esp_err_t ret = print_real_time_stats(100);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Oh Noooooo: %d", ret);
+            }
         }
 #endif
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(BTN_POLL_MS));
     }
 }
 
@@ -262,14 +383,14 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait)
     uint32_t start_run_time, end_run_time;
     esp_err_t ret;
 
-    //Allocate array to store current task states
+    // Allocate array to store current task states
     start_array_size = uxTaskGetNumberOfTasks() + 10;
     start_array = malloc(sizeof(TaskStatus_t) * start_array_size);
     if (start_array == NULL) {
         ret = ESP_ERR_NO_MEM;
         goto exit;
     }
-    //Get current task states
+    // Get current task states
     start_array_size = uxTaskGetSystemState(start_array, start_array_size, &start_run_time);
     if (start_array_size == 0) {
         ret = ESP_ERR_INVALID_SIZE;
@@ -278,21 +399,21 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait)
 
     vTaskDelay(xTicksToWait);
 
-    //Allocate array to store tasks states post delay
+    // Allocate array to store tasks states post delay
     end_array_size = uxTaskGetNumberOfTasks() + 10;
     end_array = malloc(sizeof(TaskStatus_t) * end_array_size);
     if (end_array == NULL) {
         ret = ESP_ERR_NO_MEM;
         goto exit;
     }
-    //Get post delay task states
+    // Get post delay task states
     end_array_size = uxTaskGetSystemState(end_array, end_array_size, &end_run_time);
     if (end_array_size == 0) {
         ret = ESP_ERR_INVALID_SIZE;
         goto exit;
     }
 
-    //Calculate total_elapsed_time in units of run time stats clock period.
+    // Calculate total_elapsed_time in units of run time stats clock period.
     uint32_t total_elapsed_time = (end_run_time - start_run_time);
     if (total_elapsed_time == 0) {
         ret = ESP_ERR_INVALID_STATE;
@@ -300,19 +421,19 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait)
     }
 
     printf("|       Task       | RunTime | Percentage\n");
-    //Match each task in start_array to those in the end_array
+    // Match each task in start_array to those in the end_array
     for (int i = 0; i < start_array_size; i++) {
         int k = -1;
         for (int j = 0; j < end_array_size; j++) {
             if (start_array[i].xHandle == end_array[j].xHandle) {
                 k = j;
-                //Mark that task have been matched by overwriting their handles
+                // Mark that task have been matched by overwriting their handles
                 start_array[i].xHandle = NULL;
                 end_array[j].xHandle = NULL;
                 break;
             }
         }
-        //Check if matching task found
+        // Check if matching task found
         if (k >= 0) {
             uint32_t task_elapsed_time = end_array[k].ulRunTimeCounter - start_array[i].ulRunTimeCounter;
             uint32_t percentage_time = (task_elapsed_time * 100UL) / (total_elapsed_time * portNUM_PROCESSORS);
@@ -320,7 +441,7 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait)
         }
     }
 
-    //Print unmatched tasks
+    // Print unmatched tasks
     for (int i = 0; i < start_array_size; i++) {
         if (start_array[i].xHandle != NULL) {
             printf("| %16s | Deleted\n", start_array[i].pcTaskName);
@@ -333,7 +454,7 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait)
     }
     ret = ESP_OK;
 
-exit:    //Common return path
+exit:    // Common return path
     free(start_array);
     free(end_array);
     return ret;

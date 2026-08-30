@@ -115,6 +115,55 @@ esp_err_t max9867_set_voice_volume(int volume);
  */
 esp_err_t max9867_get_voice_volume(int *volume);
 
+/**
+ * @brief Take a DC measurement on the JACKSNS/AUX pin
+ *
+ * Uses the gain calibration taken during init. Compare against
+ * max9867_get_aux_baseline_mv() to detect in-line mic button presses.
+ *
+ * @param[out] *mv:  measured voltage in mV
+ *
+ * @return
+ *     - ESP_OK
+ *     - ESP_ERR_INVALID_ARG   mv is NULL
+ *     - ESP_ERR_INVALID_STATE codec uninitialized or calibration failed
+ */
+esp_err_t max9867_read_aux_mv(int *mv);
+
+/**
+ * @brief Get the JACKSNS/AUX reading taken at init
+ *
+ * @param[out] *mv:  baseline voltage in mV
+ *
+ * @return
+ *     - ESP_OK
+ *     - ESP_ERR_INVALID_ARG   mv is NULL
+ *     - ESP_ERR_INVALID_STATE codec uninitialized or calibration failed
+ */
+esp_err_t max9867_get_aux_baseline_mv(int *mv);
+
+typedef enum {
+    MAX9867_CTRL_NONE = 0,
+    MAX9867_CTRL_CENTER,
+    MAX9867_CTRL_VOL_UP,
+    MAX9867_CTRL_VOL_DOWN,
+} max9867_ctrl_t;
+
+/**
+ * @brief Sample the in-line remote buttons
+ *
+ * Call periodically (~100ms). Reports a button once, on the debounced press
+ * edge; holds and releases report MAX9867_CTRL_NONE.
+ *
+ * @param[out] *pressed:  button pressed on this sample, if any
+ *
+ * @return
+ *     - ESP_OK
+ *     - ESP_ERR_INVALID_ARG   pressed is NULL
+ *     - ESP_ERR_INVALID_STATE codec uninitialized or calibration failed
+ */
+esp_err_t max9867_poll_inline_controls(max9867_ctrl_t *pressed);
+
 #ifdef __cplusplus
 }
 #endif

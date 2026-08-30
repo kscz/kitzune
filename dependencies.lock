@@ -12,13 +12,13 @@ dependencies:
   espressif/esp_lvgl_port:
     component_hash: 8bcec6b1144750343ce7e411a7a1057a75a6348d3edc137bd5792ccba7f6c270
     dependencies:
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
     - name: idf
       require: private
       version: '>=4.4'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com/
-      require: public
-      version: '>=8,<10'
     source:
       registry_url: https://components.espressif.com/
       type: service
@@ -34,7 +34,7 @@ dependencies:
       type: service
     version: 1.1.0
   espressif/nghttp:
-    component_hash: c52b83cc3d1083ae669751534ea4f7445974b86d91d49a5273bdb0fbf87f34d6
+    component_hash: e0429dc6ecf6fdfab077a52c3eb5846c1c4a4a6d969633e8d1227b438b78530a
     dependencies:
     - name: idf
       require: private
@@ -42,7 +42,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.62.1
+    version: 1.69.0
   idf:
     source:
       type: idf
