@@ -477,10 +477,13 @@ static void player_a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
         case ESP_A2D_REPORT_SNK_DELAY_VALUE_EVT:
             ESP_LOGI(TAG, "REPORT_SNK_DELAY_VALUE_EVT");
             break;
+        case ESP_A2D_SEP_REG_STATE_EVT:
+            ESP_LOGI(TAG, "SEP_REG_STATE_EVT");
+            break;
     }
 }
 
-void player_main(void) {
+void player_main(void *arg) {
     s_player_be_queue = xQueueCreate(4, sizeof(player_be_msg_u));
     s_task = xTaskGetHandle("PLAYER");
 

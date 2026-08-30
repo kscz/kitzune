@@ -76,30 +76,8 @@ static max9867_ctrl_t classify_mv(int mv)
 // this makes me a sad panda
 static esp_err_t max9867_read_reg(uint8_t reg, uint8_t *out, size_t len)
 {
-    esp_err_t ret = ESP_OK;
-
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    if (cmd == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    ret |= i2c_master_start(cmd);
-    ret |= i2c_master_write_byte(cmd, 0x30, true);
-    ret |= i2c_master_write_byte(cmd, reg, true);
-    ret |= i2c_master_start(cmd);
-    ret |= i2c_master_write_byte(cmd, 0x30 | 0x01, true);
-    if (len > 1) {
-        ret |= i2c_master_read(cmd, out, len - 1, I2C_MASTER_ACK);
-    }
-    ret |= i2c_master_read_byte(cmd, &out[len - 1], I2C_MASTER_NACK);
-    ret |= i2c_master_stop(cmd);
-
-    if (ret == ESP_OK) {
-        ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
-    }
-    i2c_cmd_link_delete(cmd);
-
-    return ret;
+    // i2c_bus_read_bytes issues write-restart-read, which is what the part needs
+    return i2c_bus_read_bytes(i2c_handle, 0x30, &reg, 1, out, len);
 }
 
 // V = 0.738 * AUX / k, in mV

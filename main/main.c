@@ -24,7 +24,8 @@
 #include "a2dp_stream.h"
 #include "playlist.h"
 
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
+#include "i2c_bus.h"
 
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -293,8 +294,11 @@ void app_main(void)
         .lcd_cmd_bits = 8,                      // According to SSD1306 datasheet
         .lcd_param_bits = 8,                    // According to SSD1306 datasheet
         .dc_bit_offset = 6,                     // According to SSD1306 datasheet
+        .scl_speed_hz = 400000,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)0, &io_config, &io_handle));
+    // The bus is owned by the codec (audio_board_init) - share its master handle
+    i2c_master_bus_handle_t i2c_bus = i2c_bus_get_master_handle(I2C_NUM_0);
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus, &io_config, &io_handle));
 
     ESP_LOGI(TAG, "Install SSD1306 panel driver");
     esp_lcd_panel_handle_t panel_handle = NULL;

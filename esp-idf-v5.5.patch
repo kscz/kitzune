@@ -1,18 +1,9 @@
-From d338431dcb9d19cf717776a85ef14d7c9fa452f9 Mon Sep 17 00:00:00 2001
-From: Kit Sczudlo <kit@kitscz.com>
-Date: Tue, 17 Sep 2024 12:30:40 -0700
-Subject: [PATCH] Add in accomodations for max9867 codec quirks
-
----
- components/esp_driver_i2s/i2s_std.c | 8 ++++++++
- 1 file changed, 8 insertions(+)
-
 diff --git a/components/esp_driver_i2s/i2s_std.c b/components/esp_driver_i2s/i2s_std.c
-index c3ef0c0469..3d0ab2715f 100644
+index 32f4e4125cc..10e847275aa 100644
 --- a/components/esp_driver_i2s/i2s_std.c
 +++ b/components/esp_driver_i2s/i2s_std.c
-@@ -38,6 +38,14 @@ static esp_err_t i2s_std_calculate_clock(i2s_chan_handle_t handle, const i2s_std
-     if (handle->role == I2S_ROLE_MASTER) {
+@@ -39,6 +39,14 @@ static esp_err_t i2s_std_calculate_clock(i2s_chan_handle_t handle, const i2s_std
+     if (handle->role == I2S_ROLE_MASTER || handle->full_duplex_slave) {
          clk_info->bclk = rate * handle->total_slot * slot_bits;
          clk_info->mclk = rate * clk_cfg->mclk_multiple;
 +
@@ -24,8 +15,5 @@ index c3ef0c0469..3d0ab2715f 100644
 +        }
 +
          clk_info->bclk_div = clk_info->mclk / clk_info->bclk;
-     } else {
-         /* For slave mode, mclk >= bclk * 8, so fix bclk_div to 2 first */
--- 
-2.46.0
-
+         if (clk_info->mclk % clk_info->bclk != 0) {
+             ESP_LOGW(TAG, "the current mclk multiple cannot perform integer division (slot_num: %"PRIu32", slot_bits: %"PRIu32")", handle->total_slot, slot_bits);
