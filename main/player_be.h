@@ -2,7 +2,9 @@ BaseType_t player_set_playlist(playlist_operator_handle_t new_playlist, TickType
 void player_be_volume_up(audio_board_handle_t board_handle);
 void player_be_volume_down(audio_board_handle_t board_handle);
 esp_err_t player_playpause(void);
+bool player_be_bt_ready(void);
 esp_err_t player_be_set_bt_hp(void);
+esp_err_t player_be_disable_bt(void);
 esp_err_t player_next(void);
 void player_be_init(esp_periph_handle_t bt_periph);
 void player_set_shuffle(bool is_shuffle);

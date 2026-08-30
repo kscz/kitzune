@@ -3,8 +3,8 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
-#include "esp_bt.h"
-#include "esp_bt_main.h"
+
+#include "bt_be.h"
 
 #include "periph_service.h"
 #include "input_key_service.h"
@@ -41,6 +41,14 @@ static void set_highlighted_line(size_t line) {
     lvgl_port_unlock();
 }
 
+// The teardown runs on the player task, so this only catches up on the next event
+static void refresh_bt_line(void) {
+    lvgl_port_lock(0);
+    lv_label_set_text(s_menu_items[1], bt_be_is_enabled() ?
+            "Disable " LV_SYMBOL_BLUETOOTH : LV_SYMBOL_BLUETOOTH " off");
+    lvgl_port_unlock();
+}
+
 lv_obj_t *ui_settings_get_screen(void) {
     return s_screen;
 }
@@ -74,16 +82,19 @@ esp_err_t ui_settings_init(void) {
 
 disp_state_t ui_settings_handle_input(periph_service_handle_t handle, periph_service_event_t *evt, audio_board_handle_t board_handle)
 {
+    refresh_bt_line();
+
     // Handle short presses
     if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE) {
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_CENTER:
                 if (s_hl_line == 0) {
                 } else if (s_hl_line == 1) {
-                    esp_bluedroid_disable();
-                    esp_bluedroid_deinit();
-                    esp_bt_controller_disable();
-                    esp_bt_controller_deinit();
+                    if (!bt_be_is_enabled()) {
+                        ESP_LOGW(TAG, "Bluetooth is already disabled");
+                    } else if (ESP_OK != player_be_disable_bt()) {
+                        ESP_LOGE(TAG, "Unable to queue the bluetooth teardown");
+                    }
                 }
                 break;
             case INPUT_KEY_USER_ID_UP:

@@ -9,7 +9,6 @@
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
-#include "esp_bt_device.h"
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
 #include "esp_gap_bt_api.h"
@@ -17,6 +16,11 @@
 #include "bt_be.h"
 
 #define TAG "BT_BE"
+
+// The stack stores bonds but not names, so we shadow the names here
+#define BT_NVS_NAMESPACE "kz_bt_pair"
+#define BDA_KEY_LEN 13
+#define BT_BE_MAX_BONDS 16
 
 typedef enum {
     APP_GAP_STATE_IDLE = 0,
@@ -30,6 +34,7 @@ static bt_dev_info_t s_dev[16];
 static size_t s_dev_count = 0;
 static app_gap_state_t s_state;
 static bt_be_disc_cb_t s_disc_complete_cb = NULL;
+static bool s_enabled = false;
 
 static char *bda2str(esp_bd_addr_t bda, char *str, size_t size)
 {
@@ -43,7 +48,184 @@ static char *bda2str(esp_bd_addr_t bda, char *str, size_t size)
     return str;
 }
 
-esp_err_t bt_be_connect_ad2p(esp_bd_addr_t bda) {
+static void bda2key(const uint8_t *bda, char *key)
+{
+    sprintf(key, "%02x%02x%02x%02x%02x%02x",
+            bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+}
+
+// Best effort: a name we can't store just means the bond shows as an address
+static void save_device_name(const uint8_t *bda, const char *name)
+{
+    if (name == NULL || name[0] == '\0') {
+        return;
+    }
+
+    char key[BDA_KEY_LEN];
+    bda2key(bda, key);
+
+    nvs_handle_t nvs;
+    esp_err_t ret = nvs_open(BT_NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to open %s: %s", BT_NVS_NAMESPACE, esp_err_to_name(ret));
+        return;
+    }
+
+    // Skip the write if it wouldn't change anything
+    char existing[BT_BE_NAME_LEN];
+    size_t existing_len = sizeof(existing);
+    if (nvs_get_str(nvs, key, existing, &existing_len) == ESP_OK &&
+            strncmp(existing, name, BT_BE_NAME_LEN - 1) == 0) {
+        nvs_close(nvs);
+        return;
+    }
+
+    char trimmed[BT_BE_NAME_LEN];
+    snprintf(trimmed, sizeof(trimmed), "%s", name);
+    if ((ret = nvs_set_str(nvs, key, trimmed)) == ESP_OK) {
+        ret = nvs_commit(nvs);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to store name for %s: %s", key, esp_err_to_name(ret));
+    }
+    nvs_close(nvs);
+}
+
+// Drop names whose bond the stack no longer has
+static void prune_stale_names(nvs_handle_t nvs, const esp_bd_addr_t *bonded, size_t bonded_count)
+{
+    char stale[BT_BE_MAX_PAIRED][NVS_KEY_NAME_MAX_SIZE];
+    size_t stale_count = 0;
+
+    nvs_iterator_t it = NULL;
+    esp_err_t ret = nvs_entry_find_in_handle(nvs, NVS_TYPE_STR, &it);
+    while (ret == ESP_OK && stale_count < BT_BE_MAX_PAIRED) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+
+        bool is_bonded = false;
+        for (size_t i = 0; i < bonded_count && !is_bonded; ++i) {
+            char key[BDA_KEY_LEN];
+            bda2key(bonded[i], key);
+            is_bonded = (strcmp(info.key, key) == 0);
+        }
+
+        if (!is_bonded) {
+            strlcpy(stale[stale_count], info.key, NVS_KEY_NAME_MAX_SIZE);
+            stale_count += 1;
+        }
+
+        ret = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+
+    for (size_t i = 0; i < stale_count; ++i) {
+        ESP_LOGI(TAG, "Forgetting unbonded device %s", stale[i]);
+        nvs_erase_key(nvs, stale[i]);
+    }
+    if (stale_count != 0) {
+        nvs_commit(nvs);
+    }
+}
+
+size_t bt_be_get_paired_devices(bt_paired_dev_t *out, size_t max)
+{
+    if (!s_enabled || out == NULL || max == 0) {
+        return 0;
+    }
+
+    int bond_count = (max < BT_BE_MAX_PAIRED) ? (int)max : BT_BE_MAX_PAIRED;
+    esp_bd_addr_t bonded[BT_BE_MAX_PAIRED];
+    esp_err_t ret = esp_bt_gap_get_bond_device_list(&bond_count, bonded);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to read the bond list: %s", esp_err_to_name(ret));
+        return 0;
+    }
+    if (bond_count <= 0) {
+        return 0;
+    }
+
+    nvs_handle_t nvs;
+    bool have_nvs = (nvs_open(BT_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK);
+
+    for (int i = 0; i < bond_count; ++i) {
+        memcpy(out[i].bda, bonded[i], sizeof(out[i].bda));
+        out[i].name[0] = '\0';
+
+        if (have_nvs) {
+            char key[BDA_KEY_LEN];
+            bda2key(bonded[i], key);
+            size_t name_len = sizeof(out[i].name);
+            if (nvs_get_str(nvs, key, out[i].name, &name_len) != ESP_OK) {
+                out[i].name[0] = '\0';
+            }
+        }
+
+        // Fall back to the address for a bond we never caught the name of
+        if (out[i].name[0] == '\0') {
+            bda2str(bonded[i], out[i].name, sizeof(out[i].name));
+        }
+    }
+
+    if (have_nvs) {
+        prune_stale_names(nvs, bonded, bond_count);
+        nvs_close(nvs);
+    }
+
+    return (size_t)bond_count;
+}
+
+esp_err_t bt_be_forget_devices(void)
+{
+    if (!s_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // The stack can hold more bonds than we list
+    int bond_count = esp_bt_gap_get_bond_device_num();
+    if (bond_count <= 0) {
+        return ESP_OK;
+    }
+    if (bond_count > BT_BE_MAX_BONDS) {
+        bond_count = BT_BE_MAX_BONDS;
+    }
+
+    esp_bd_addr_t bonded[BT_BE_MAX_BONDS];
+    esp_err_t ret = esp_bt_gap_get_bond_device_list(&bond_count, bonded);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to read the bond list: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    char bda_str[18];
+    for (int i = 0; i < bond_count; ++i) {
+        esp_err_t rm_ret = esp_bt_gap_remove_bond_device(bonded[i]);
+        if (rm_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Unable to drop bond %s: %s",
+                     bda2str(bonded[i], bda_str, sizeof(bda_str)), esp_err_to_name(rm_ret));
+            ret = rm_ret;
+        }
+    }
+
+    nvs_handle_t nvs;
+    if (nvs_open(BT_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_all(nvs);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+
+    ESP_LOGI(TAG, "Dropped %d bonds", bond_count);
+    return ret;
+}
+
+esp_err_t bt_be_connect_ad2p(esp_bd_addr_t bda, const char *name) {
+    if (!s_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Stale entries get pruned if the bond never lands
+    save_device_name(bda, name);
+
     char bda_str[18];
     ESP_LOGI(TAG, "Connecting: %s", bda2str(bda, bda_str, 18));
     return esp_a2d_source_connect(bda);
@@ -200,6 +382,20 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
             }
             break;
         }
+    case ESP_BT_GAP_AUTH_CMPL_EVT: {
+            if (param->auth_cmpl.stat != ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGE(TAG, "Authentication failed, status: %d", param->auth_cmpl.stat);
+                break;
+            }
+
+            // device_name isn't guaranteed terminated, so bound the copy
+            char name[BT_BE_NAME_LEN];
+            snprintf(name, sizeof(name), "%.*s", (int)(sizeof(name) - 1),
+                     (const char *)param->auth_cmpl.device_name);
+            ESP_LOGI(TAG, "Authenticated: %s", name);
+            save_device_name(param->auth_cmpl.bda, name);
+            break;
+        }
     case ESP_BT_GAP_MODE_CHG_EVT:
             ESP_LOGI(TAG, "ESP_BT_GAP_MODE_CHG_EVT mode:%d", param->mode_chg.mode);
             break;
@@ -216,19 +412,22 @@ bool bt_be_is_discovery_complete(void) {
 }
 
 esp_err_t bt_be_start_discovery(bt_be_disc_cb_t disc_comp_cb) {
+    if (!s_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_state != APP_GAP_STATE_DEVICE_DISCOVER_COMPLETE && s_state != APP_GAP_STATE_IDLE) {
         return ESP_FAIL;
     }
-    /* inititialize device information and status */
+    // inititialize device information and status
     bt_app_gap_init();
 
     s_disc_complete_cb = disc_comp_cb;
 
-    /* start to discover nearby Bluetooth devices */
+    // start to discover nearby Bluetooth devices
     s_state = APP_GAP_STATE_DEVICE_DISCOVERING;
     esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 10, 0);
 
-    /* set discoverable and connectable mode, wait to be connected */
+    // set discoverable and connectable mode, wait to be connected
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
     return ESP_OK;
@@ -281,5 +480,55 @@ void bt_be_init(void)
     /* register GAP callback function */
     esp_bt_gap_register_callback(bt_app_gap_cb);
 
-    esp_bt_dev_set_device_name("KITZUNE");
+    esp_bt_gap_set_device_name("KITZUNE");
+
+    s_enabled = true;
+}
+
+bool bt_be_is_enabled(void) {
+    return s_enabled;
+}
+
+esp_err_t bt_be_deinit(void)
+{
+    esp_err_t ret;
+
+    if (!s_enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_enabled = false;
+
+    // Drop the callback before cancelling: the stop event fires on the BTC task
+    s_disc_complete_cb = NULL;
+    if (s_state == APP_GAP_STATE_DEVICE_DISCOVERING) {
+        esp_bt_gap_cancel_discovery();
+    }
+    s_state = APP_GAP_STATE_IDLE;
+    s_dev_count = 0;
+
+    if ((ret = esp_bluedroid_disable()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s bluedroid disable failed: %s", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+    if ((ret = esp_bluedroid_deinit()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s bluedroid deinit failed: %s", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+    if ((ret = esp_bt_controller_disable()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s controller disable failed: %s", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+    if ((ret = esp_bt_controller_deinit()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s controller deinit failed: %s", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+
+    // One-way: drop this to make BT re-enablable without a reboot
+    if ((ret = esp_bt_mem_release(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
+        ESP_LOGE(TAG, "%s memory release failed: %s", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "Bluetooth torn down");
+    return ESP_OK;
 }

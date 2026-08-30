@@ -45,8 +45,8 @@ static size_t s_hl_line = 0;
 
 // De-highlight the currently highlighted line and disable circular scroll
 // Then highlight the new line and enable circular scroll
+// Caller must hold the LVGL lock!
 static void set_highlighted_line(size_t line) {
-    lvgl_port_lock(0);
     // Clear the old highlight
     lv_obj_set_style_text_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(s_fe_list[s_hl_line].list_handle, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -59,12 +59,11 @@ static void set_highlighted_line(size_t line) {
     lv_obj_set_style_bg_color(s_fe_list[s_hl_line].list_handle, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(s_fe_list[s_hl_line].list_handle, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_long_mode(s_fe_list[s_hl_line].list_handle, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lvgl_port_unlock();
 }
 
 // Check to see if the current line is within the viewport and scroll it if not
+// Caller must hold the LVGL lock!
 static void scroll_line_to_view(size_t line) {
-    lvgl_port_lock(0);
     // Get the target line's position and height
     lv_coord_t line_y = lv_obj_get_y(s_fe_list[line].list_handle);
     lv_coord_t line_h = lv_obj_get_height(s_fe_list[line].list_handle);
@@ -79,6 +78,12 @@ static void scroll_line_to_view(size_t line) {
     } else if(line_y < scroll_y) {
         lv_obj_scroll_to_y(s_fe_menu, line_y, LV_ANIM_ON);
     }
+}
+
+static void select_line(size_t line) {
+    lvgl_port_lock(0);
+    set_highlighted_line(line);
+    scroll_line_to_view(line);
     lvgl_port_unlock();
 }
 
@@ -160,7 +165,9 @@ esp_err_t ui_fe_init(void) {
     }
     s_curpath = strstack_new();
 
+    lvgl_port_lock(0);
     s_screen = lv_obj_create(NULL);
+    lvgl_port_unlock();
 
     // Create a status bar
     s_top_bar = ui_create_top_bar(s_screen);
@@ -173,7 +180,7 @@ esp_err_t ui_fe_init(void) {
     lv_obj_align(s_fe_menu, LV_ALIGN_TOP_MID, 0, 12);
     lvgl_port_unlock();
     create_dir_list("/sdcard");
-    set_highlighted_line(0);
+    select_line(0);
 
 
     return ESP_OK;
@@ -248,20 +255,18 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_UP: {
                 if (s_hl_line > 0) {
-                    set_highlighted_line(s_hl_line - 1);
+                    select_line(s_hl_line - 1);
                 } else {
-                    set_highlighted_line(s_fe_list_count - 1);
+                    select_line(s_fe_list_count - 1);
                 }
-                scroll_line_to_view(s_hl_line);
                 break;
             }
             case INPUT_KEY_USER_ID_DOWN: {
                 if (s_hl_line < s_fe_list_count - 1) {
-                    set_highlighted_line(s_hl_line + 1);
+                    select_line(s_hl_line + 1);
                 } else {
-                    set_highlighted_line(0);
+                    select_line(0);
                 }
-                scroll_line_to_view(s_hl_line);
                 break;
             }
             case INPUT_KEY_USER_ID_CENTER: {
@@ -342,7 +347,7 @@ disp_state_t ui_fe_handle_input(periph_service_handle_t handle, periph_service_e
                 dynstr_append_c_str(path, strstack_peek_lifo(s_curpath, i));
             }
             create_dir_list(dynstr_as_c_str(path));
-            set_highlighted_line(0);
+            select_line(0);
             dynstr_destroy(path);
         }
     }
