@@ -1,10 +1,15 @@
+#include <stdio.h>
+#include <string.h>
+
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
+#include "batt_mon.h"
 #include "ui_common.h"
+
+#define TOP_BAR_REFRESH_MS 1000
 
 static bool s_is_playing = false;
 static uint8_t s_volume_level = 2;
-static uint8_t s_batt_level = 4;
 
 static lv_disp_t * s_disp = NULL;
 static lv_style_t s_style_small;
@@ -18,31 +23,22 @@ void ui_set_volume(uint8_t level) {
     s_volume_level = level;
 }
 
-void ui_set_batt_level(uint8_t level) {
-    s_batt_level = level;
-}
-
 void ui_set_top_bar(lv_obj_t *lbl) {
     if (lbl == NULL)
         return;
 
+    uint8_t batt_pct = batt_mon_get_percent();
     const char * batt_sym = NULL;
-    switch(s_batt_level) {
-        case 0:
-            batt_sym = LV_SYMBOL_BATTERY_EMPTY;
-            break;
-        case 1:
-            batt_sym = LV_SYMBOL_BATTERY_1;
-            break;
-        case 2:
-            batt_sym = LV_SYMBOL_BATTERY_2;
-            break;
-        case 3:
-            batt_sym = LV_SYMBOL_BATTERY_3;
-            break;
-        default:
-            batt_sym = LV_SYMBOL_BATTERY_FULL;
-            break;
+    if (batt_pct >= 80) {
+        batt_sym = LV_SYMBOL_BATTERY_FULL;
+    } else if (batt_pct >= 55) {
+        batt_sym = LV_SYMBOL_BATTERY_3;
+    } else if (batt_pct >= 30) {
+        batt_sym = LV_SYMBOL_BATTERY_2;
+    } else if (batt_pct >= 10) {
+        batt_sym = LV_SYMBOL_BATTERY_1;
+    } else {
+        batt_sym = LV_SYMBOL_BATTERY_EMPTY;
     }
 
     const char * vol_sym = NULL;
@@ -58,11 +54,22 @@ void ui_set_top_bar(lv_obj_t *lbl) {
             break;
     }
 
-    lvgl_port_lock(0);
-    lv_label_set_text_fmt(lbl, "Kitzune              %s  %s  %s",
+    char text[64];
+    snprintf(text, sizeof(text), "Kitzune              %s  %s  %s",
             (s_is_playing ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE),
             vol_sym, batt_sym);
+
+    lvgl_port_lock(0);
+    // Setting the text always invalidates, so don't redraw an unchanged bar
+    const char *cur = lv_label_get_text(lbl);
+    if (cur == NULL || strcmp(cur, text) != 0) {
+        lv_label_set_text(lbl, text);
+    }
     lvgl_port_unlock();
+}
+
+static void top_bar_timer_cb(lv_timer_t *timer) {
+    ui_set_top_bar((lv_obj_t *)timer->user_data);
 }
 
 lv_obj_t *ui_create_top_bar(lv_obj_t *screen) {
@@ -75,6 +82,7 @@ lv_obj_t *ui_create_top_bar(lv_obj_t *screen) {
     lvgl_port_unlock();
     ui_set_top_bar(top_bar);
     lvgl_port_lock(0);
+    lv_timer_create(top_bar_timer_cb, TOP_BAR_REFRESH_MS, top_bar);
     lv_obj_add_style(top_bar, &s_style_small, 0);
     lv_obj_set_width(top_bar, LV_HOR_RES);
     lv_obj_set_style_text_color(top_bar, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);

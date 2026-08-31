@@ -280,6 +280,7 @@ static esp_err_t playpause_playlist(void) {
                 periph_bt_play(s_bt_periph);
             }
             audio_pipeline_run(s_pipeline);
+            ui_set_play(true);
             break;
         case AEL_STATE_RUNNING :
             ESP_LOGI(TAG, "Pausing audio pipeline");
@@ -287,6 +288,7 @@ static esp_err_t playpause_playlist(void) {
             if (s_hp_is_bt) {
                 periph_bt_pause(s_bt_periph);
             }
+            ui_set_play(false);
             break;
         case AEL_STATE_PAUSED :
             ESP_LOGI(TAG, "Resuming audio pipeline");
@@ -294,6 +296,7 @@ static esp_err_t playpause_playlist(void) {
                 periph_bt_play(s_bt_periph);
             }
             audio_pipeline_resume(s_pipeline);
+            ui_set_play(true);
             break;
         default :
             ESP_LOGI(TAG, "Unsupported state %d", el_state);
@@ -488,6 +491,7 @@ static void configure_and_run_playlist(const char *url) {
         periph_bt_play(s_bt_periph);
     }
     audio_pipeline_run(s_pipeline);
+    ui_set_play(true);
 }
 
 // Runs on the player task: the pipeline and the a2dp element are ours, so a

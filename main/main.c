@@ -34,6 +34,7 @@
 #include "esp_lcd_panel_vendor.h"
 
 #include "lvgl.h"
+#include "batt_mon.h"
 #include "bt_be.h"
 #include "max9867.h"
 #include "mono_disp.h"
@@ -57,6 +58,8 @@ static esp_err_t print_real_time_stats(TickType_t xTicksToWait);
 #define DISP_SLEEP_MS 30000
 
 #define BTN_POLL_MS 100
+
+#define BATT_POLL_MS 10000
 
 /* Cap on how long a wake keypress can eat the input, in case its release event
    never lands */
@@ -326,6 +329,13 @@ void app_main(void)
         return;
     }
 
+    if (ESP_OK == batt_mon_init()) {
+        // Get a reading in before the first top bar draw
+        batt_mon_poll();
+    } else {
+        ESP_LOGW(TAG, "Battery monitoring is unavailable");
+    }
+
     ui_common_init(disp);
     ui_mm_init();
     ui_np_init();
@@ -338,6 +348,8 @@ void app_main(void)
 #if configUSE_TRACE_FACILITY != 0
     int stats_tick = 0;
 #endif
+
+    int batt_tick = 0;
 
     while(1) {
         // These don't wake the screen up
@@ -359,6 +371,11 @@ void app_main(void)
                 default:
                     break;
             }
+        }
+
+        if (++batt_tick >= (BATT_POLL_MS / BTN_POLL_MS)) {
+            batt_tick = 0;
+            batt_mon_poll();
         }
 
         if ((xTaskGetTickCount() - s_last_input_tick) >= pdMS_TO_TICKS(DISP_SLEEP_MS)) {

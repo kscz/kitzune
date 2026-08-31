@@ -3,6 +3,7 @@ set(COMPONENT_SRCS
     "dynstr.c"
     "strstack.c"
     "kz_util.c"
+    "batt_mon.c"
     "mono_disp.c"
     "ui_common.c"
     "ui_bt.c"
