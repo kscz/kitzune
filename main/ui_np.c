@@ -16,6 +16,7 @@
 // Local handles for all of the UI elements
 static lv_obj_t * s_screen = NULL;
 static lv_obj_t * s_title_bar = NULL;
+static lv_obj_t * s_time_bar = NULL;
 static lv_obj_t * s_shuffle_bar = NULL;
 static lv_obj_t * s_top_bar = NULL;
 
@@ -25,6 +26,22 @@ void ui_np_set_song_title(const char *title) {
 
     lvgl_port_lock(0);
     lv_label_set_text(s_title_bar, title);
+    lvgl_port_unlock();
+}
+
+// A total of 0 means the length isn't known yet, so only show the elapsed side
+void ui_np_set_time(int elapsed_sec, int total_sec) {
+    if (s_time_bar == NULL)
+        return;
+
+    lvgl_port_lock(0);
+    if (total_sec > 0) {
+        lv_label_set_text_fmt(s_time_bar, "%d:%02d / %d:%02d",
+                elapsed_sec / 60, elapsed_sec % 60,
+                total_sec / 60, total_sec % 60);
+    } else {
+        lv_label_set_text_fmt(s_time_bar, "%d:%02d", elapsed_sec / 60, elapsed_sec % 60);
+    }
     lvgl_port_unlock();
 }
 
@@ -51,6 +68,12 @@ esp_err_t ui_np_init(void) {
     lv_label_set_long_mode(s_title_bar, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
     lv_obj_set_width(s_title_bar, LV_HOR_RES);
     lv_obj_align(s_title_bar, LV_ALIGN_TOP_MID, 0, 12);
+    s_time_bar = lv_label_create(s_screen);
+    ui_add_style_small(s_time_bar);
+    lv_label_set_text(s_time_bar, "0:00");
+    lv_obj_set_width(s_time_bar, LV_HOR_RES);
+    lv_obj_set_style_text_align(s_time_bar, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(s_time_bar, LV_ALIGN_TOP_MID, 0, 28);
     s_shuffle_bar = lv_label_create(s_screen);
     lv_obj_set_width(s_shuffle_bar, LV_HOR_RES);
     lv_label_set_text(s_shuffle_bar, LV_SYMBOL_SHUFFLE);

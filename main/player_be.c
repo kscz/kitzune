@@ -43,6 +43,7 @@
 
 #define PLAYER_DECODE_IN_PSRAM (true)
 #define PLAYER_DECODER_OUT_BUF_SIZE (16 * 1024)
+#define ELEMENT_INPUT_TIMEOUT_MS 500
 
 typedef enum {
     PLAYER_BE_PLAYLIST_MSG,
@@ -83,6 +84,12 @@ static audio_extension_e s_current_ext = AUD_EXT_UNKNOWN;
 static audio_event_iface_handle_t s_evt;
 
 static TaskHandle_t s_task = NULL;
+
+// Position from the decoder's byte_pos: exact for CBR, drifts on VBR
+static int64_t s_data_start = 0;
+static int s_bps = 0;
+static int s_total_sec = 0;
+static int s_elapsed_sec = -1;
 
 static bool s_playmode_is_shuffle = true;
 static bool s_hp_is_bt = false, s_hp_is_bt_desired = false;
@@ -246,6 +253,23 @@ esp_err_t player_be_disable_bt(void) {
     return ESP_OK;
 }
 
+// Elements block on their input ringbuffer forever by default. audio_pipeline_pause()
+// pauses upstream first, so whichever element it starves next never returns from
+// that read to handle its own PAUSE, and a later resume skips it for still being
+// RUNNING. A finite read timeout gets it back to its message queue.
+static void set_input_timeouts(void) {
+    audio_element_handle_t els[] = {
+        s_mp3_stream, s_flac_stream, s_opus_stream, s_ogg_stream,
+        s_wav_stream, s_aac_stream, s_resampler, s_hp_stream,
+    };
+
+    for (int i = 0; i < (int)(sizeof(els) / sizeof(els[0])); ++i) {
+        if (els[i] != NULL) {
+            audio_element_set_input_timeout(els[i], pdMS_TO_TICKS(ELEMENT_INPUT_TIMEOUT_MS));
+        }
+    }
+}
+
 static esp_err_t playpause_playlist(void) {
     audio_element_state_t el_state = s_hp_is_bt ?
        audio_element_get_state(s_bt_hp_stream) : audio_element_get_state(s_hp_stream);
@@ -337,6 +361,92 @@ bool player_get_shuffle(void) {
     return s_playmode_is_shuffle;
 }
 
+// The seek callback maps a timestamp to a file offset, so t=0 is where the
+// audio data starts. Decoders without one leave us at 0.
+static int64_t decoder_data_start(int64_t total_bytes) {
+    int seek_sec = 0, byte_pos = 0, out_size = 0;
+
+    if (s_current_decoder == NULL) {
+        return 0;
+    }
+    if (ESP_OK != audio_element_seek(s_current_decoder, &seek_sec, sizeof(seek_sec),
+                                     &byte_pos, &out_size)) {
+        return 0;
+    }
+    if (out_size != sizeof(byte_pos) || byte_pos < 0 || byte_pos >= total_bytes) {
+        return 0;
+    }
+    return byte_pos;
+}
+
+// flac reports total_bytes only on close, so fall back to the file size
+static int64_t track_total_bytes(const audio_element_info_t *dec_info) {
+    if (dec_info->total_bytes > 0) {
+        return dec_info->total_bytes;
+    }
+
+    audio_element_info_t fs_info = {0};
+    audio_element_getinfo(s_fs_stream, &fs_info);
+    return fs_info.total_bytes;
+}
+
+static void reset_play_time(void) {
+    s_data_start = 0;
+    s_bps = 0;
+    s_total_sec = 0;
+    s_elapsed_sec = -1;
+    ui_np_set_time(0, 0);
+}
+
+static void update_play_time(void) {
+    if (s_current_decoder == NULL) {
+        return;
+    }
+
+    audio_element_info_t info = {0};
+    audio_element_getinfo(s_current_decoder, &info);
+
+    int64_t total_bytes = track_total_bytes(&info);
+    if (total_bytes <= 0) {
+        return;
+    }
+
+    int elapsed;
+    if (info.bps > 0) {
+        if (s_bps <= 0) {
+            s_bps = info.bps;
+            // flac's seek callback divides by a duration it hasn't published
+            // yet, so never ask that one
+            s_data_start = (s_current_ext != AUD_EXT_FLAC) ?
+                    decoder_data_start(total_bytes) : 0;
+            s_total_sec = (total_bytes > s_data_start) ?
+                    (int)(((total_bytes - s_data_start) * 8) / s_bps) : 0;
+        }
+
+        int64_t played = info.byte_pos - s_data_start;
+        if (played < 0) {
+            played = 0;
+        }
+        elapsed = (int)((played * 8) / s_bps);
+    } else if (info.duration > 0) {
+        // flac only ever publishes a duration, in ms
+        s_total_sec = info.duration / 1000;
+        elapsed = (int)((info.byte_pos * s_total_sec) / total_bytes);
+    } else {
+        return;
+    }
+
+    if (s_total_sec > 0 && elapsed > s_total_sec) {
+        elapsed = s_total_sec;
+    }
+    if (elapsed == s_elapsed_sec) {
+        return;
+    }
+
+    s_elapsed_sec = elapsed;
+    ui_np_set_time(elapsed, s_total_sec);
+}
+
 static void configure_and_run_playlist(const char *url) {
     audio_pipeline_stop(s_pipeline);
     if (s_hp_is_bt) {
@@ -351,6 +461,7 @@ static void configure_and_run_playlist(const char *url) {
         ext = kz_get_ext(url);
         audio_element_set_uri(s_fs_stream, url);
     }
+    reset_play_time();
     audio_pipeline_reset_ringbuffer(s_pipeline);
     audio_pipeline_reset_elements(s_pipeline);
     audio_pipeline_change_state(s_pipeline, AEL_STATE_INIT);
@@ -569,6 +680,8 @@ void player_main(void *arg) {
     audio_pipeline_register(s_pipeline, s_resampler, "rsp");
     audio_pipeline_register(s_pipeline, s_bt_hp_stream, "bt");
 
+    set_input_timeouts();
+
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
     s_evt = audio_event_iface_init(&evt_cfg);
 
@@ -648,6 +761,7 @@ void player_main(void *arg) {
                 disable_bt();
             }
         }
+        update_play_time();
         if (ESP_OK != audio_event_iface_listen(s_evt, &msg, pdMS_TO_TICKS(1000))) {
             continue;
         }
@@ -666,6 +780,7 @@ void player_main(void *arg) {
                 } else {
                     audio_element_setinfo(s_bt_hp_stream, &music_info);
                 }
+                update_play_time();
                 continue;
             }
             if (msg.source == (void *) s_current_decoder
