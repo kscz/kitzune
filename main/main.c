@@ -54,7 +54,7 @@ static const char *TAG = "MAIN";
 static esp_err_t print_real_time_stats(TickType_t xTicksToWait);
 #endif
 
-#define DISP_SLEEP_MS 15000
+#define DISP_SLEEP_MS 30000
 
 #define BTN_POLL_MS 100
 
